@@ -12,15 +12,31 @@ import kotlin.math.roundToInt
  *
  * Its output level is fixed, so the `mic_gain` setting is applied afterwards with [applyGainDb].
  *
- * Echo cancellation is left off: it needs the speaker's output fed in as a reference, which the
- * app doesn't do, and without one it only costs CPU.
+ * Echo cancellation (AEC3) is optional (`echo_cancellation`): when on, the music this device
+ * plays through Sendspin is fed in as the reference via [EchoReference], so it can be taken out
+ * of the microphone. Without a reference it only costs CPU, so it is off by default.
  */
 class WebRtcMicProcessor(
     private val processFrame: (samples: ShortArray, offset: Int) -> Int,
     private val closeNative: () -> Unit,
+    private val processRender: ((samples: ShortArray, offset: Int) -> Int)? = null,
 ) : AutoCloseable {
 
     private var closed = false
+
+    // Far-end frames go into the same native instance, serialised with capture and close.
+    private val renderSink = EchoReference.Sink { frame -> render(frame) }
+
+    init {
+        if (processRender != null) EchoReference.addSink(renderSink)
+    }
+
+    @Synchronized
+    private fun render(frame: ShortArray) {
+        if (closed) return
+        val result = processRender?.invoke(frame, 0) ?: return
+        if (result != 0) Timber.w("WebRTC render frame processing returned $result")
+    }
 
     /**
      * Processes [input] and returns the result as a new array. WebRTC works on whole 10 ms frames,
@@ -49,6 +65,7 @@ class WebRtcMicProcessor(
     override fun close() {
         if (closed) return
         closed = true
+        if (processRender != null) EchoReference.removeSink(renderSink)
         runCatching { closeNative() }
     }
 
@@ -70,9 +87,9 @@ class WebRtcMicProcessor(
          * such as on a device the native library doesn't support. The microphone then carries on
          * without gain control or noise suppression.
          */
-        fun create(): WebRtcMicProcessor? = try {
+        fun create(echoCancellation: Boolean = false): WebRtcMicProcessor? = try {
             val config = WebRtcApm.Config().apply {
-                aecEnabled = false
+                aecEnabled = echoCancellation
                 nsEnabled = true
                 nsLevel = WebRtcApm.NsLevel.MODERATE
                 agcEnabled = true
@@ -81,8 +98,12 @@ class WebRtcMicProcessor(
                 vadEnabled = false
             }
             val apm = WebRtcApm(config)
-            Timber.i("WebRTC audio processing started")
-            WebRtcMicProcessor(apm::processCaptureStream, apm::close)
+            Timber.i("WebRTC audio processing started (echo cancellation ${if (echoCancellation) "on" else "off"})")
+            WebRtcMicProcessor(
+                apm::processCaptureStream,
+                apm::close,
+                if (echoCancellation) apm::processRenderStream else null,
+            )
         } catch (t: Throwable) {
             // Includes UnsatisfiedLinkError, which is an Error, not an Exception.
             Timber.e(t, "WebRTC audio processing is not available on this device")

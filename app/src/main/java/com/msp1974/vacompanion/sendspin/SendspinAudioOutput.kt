@@ -1,5 +1,6 @@
 package com.msp1974.vacompanion.sendspin
 
+import com.msp1974.vacompanion.audio.EchoReference
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
@@ -165,6 +166,9 @@ class SendspinAudioOutput {
             consumed -= partialFrame
             buffer.position(startPosition + consumed)
         }
+        if (consumed > 0 && EchoReference.isActive) {
+            EchoReference.queue(buffer, startPosition, consumed, sampleRate, channels, gain)
+        }
         return consumed
     }
 
@@ -190,6 +194,7 @@ class SendspinAudioOutput {
         val delta = presented - lastPresented
         if (delta <= 0) return null
         lastPresented = presented
+        EchoReference.release(delta)
         Played(delta, atUs)
     }
 
@@ -227,6 +232,7 @@ class SendspinAudioOutput {
     }
 
     private fun resetProgress() {
+        EchoReference.reset()
         lastPresented = 0
         headFrames = 0
         lastHead = 0

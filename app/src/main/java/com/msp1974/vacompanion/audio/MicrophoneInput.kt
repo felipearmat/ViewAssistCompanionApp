@@ -66,7 +66,7 @@ class MicrophoneInput (
     private var aec: AcousticEchoCanceler? = null
 
     // Null if WebRTC could not be started on this device.
-    private val webRtc: WebRtcMicProcessor? = WebRtcMicProcessor.create()
+    private val webRtc: WebRtcMicProcessor? = WebRtcMicProcessor.create(config.echoCancellationEnabled)
     private var audioDSP = AudioDSP()
 
     // Owns all microphone device selection, the AudioDeviceCallback, and Bluetooth SCO -

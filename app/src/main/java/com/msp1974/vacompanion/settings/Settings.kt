@@ -246,6 +246,17 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // WebRTC echo cancellation with the music this device plays (Sendspin) as reference, so the
+    // microphone hears less of it. Off by default; applies the next time the microphone opens.
+    // Stored on the device, so it survives a restart; HA can also push it.
+    var echoCancellationEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("echo_cancellation", false)
+        set(value) {
+            val old = echoCancellationEnabled
+            this.sharedPrefs.edit { putBoolean("echo_cancellation", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("echoCancellationEnabled", old, value))
+        }
+
     // Send Home Assistant the audio around each wake word detection, with its outcome, so the
     // wake word model can be retrained on real use. Off by default. Stored on the device, so it
     // survives a restart; HA can also push it.
@@ -648,6 +659,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["suppress_wake_sound"]?.jsonPrimitive?.booleanOrNull?.let { suppressWakeSound = it }
         settings["thinking_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingSound = it }
         settings["wake_word_clips"]?.jsonPrimitive?.booleanOrNull?.let { wakeWordClipsEnabled = it }
+        settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }
         settings["quick_actions"]?.jsonPrimitive?.booleanOrNull?.let { enableQuickActions = it }
         settings["custom_files"]?.let { customFiles = it }

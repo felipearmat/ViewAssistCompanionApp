@@ -581,6 +581,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             // Every device that heard the wake word reacts at once: the sound tells the user it was
             // heard, and the audio from now on is kept, so nothing said while the devices agree
             // who answers is lost. Only the winner uses the audio; the others drop it.
+            // Turn this device's music down at once, so the rest of the request is heard over it;
+            // the voice player's audio focus keeps it down once the pipeline starts.
+            config.eventBroadcaster.notifyEvent(Event(EVENT_LOCAL_WAKE_WORD_DETECTED, "", ""))
             if (config.wakeWordClipsEnabled && detection.wakeWordId != "manual_wake") {
                 wakeClips.onDetected(detection.timestamp, detectionJson(detection, level))
             }
@@ -596,6 +599,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 Timber.i("Another device is nearer to the speaker, not starting audio pipeline")
                 sendWakeWordDetectionStatus(detection, level, answered = false)
                 wakeClips.finish(detection.timestamp, "other_device")
+                config.eventBroadcaster.notifyEvent(Event(EVENT_LOCAL_WAKE_WORD_DISMISSED, "", ""))
                 return
             }
             sendWakeWordDetectionStatus(detection, level, answered = true)
@@ -1206,6 +1210,8 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     companion object {
         const val WAKE_WORD_CLIP_EVENT_TYPE = "wake_word_clip"
+        const val EVENT_LOCAL_WAKE_WORD_DETECTED = "localWakeWordDetected"
+        const val EVENT_LOCAL_WAKE_WORD_DISMISSED = "localWakeWordDismissed"
         fun isoNow(): String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
 
         private const val AUDIO_DEVICE_DEBOUNCE_MS = 1000L

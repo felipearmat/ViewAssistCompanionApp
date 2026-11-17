@@ -481,6 +481,17 @@ class SendspinPlayer(
                 }
             }
             "remotePipelineCompleted" -> mainHandler.post { if (isRelevantTo(event)) remoteUnduck.run() }
+            // This device heard its wake word: duck now rather than when the pipeline takes audio
+            // focus, so the music doesn't drown the request. Released by the voice player's focus
+            // handling, when another device answers instead, or by the failsafe.
+            "localWakeWordDetected" -> mainHandler.post {
+                if (synchronized(nowPlayingLock) { streamActive || groupPlaying }) {
+                    duck()
+                    mainHandler.removeCallbacks(remoteUnduck)
+                    mainHandler.postDelayed(remoteUnduck, REMOTE_DUCK_TIMEOUT_MS)
+                }
+            }
+            "localWakeWordDismissed" -> mainHandler.post { remoteUnduck.run() }
         }
     }
 
