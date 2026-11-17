@@ -152,6 +152,8 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.mlkit.face.detection)
+    // Used to come in through Firebase; the motion detection code awaits ML Kit tasks with it.
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
 }
