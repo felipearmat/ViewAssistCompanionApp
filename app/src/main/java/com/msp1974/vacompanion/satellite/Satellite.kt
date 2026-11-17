@@ -584,8 +584,10 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             ) ?: true
             if (!won) {
                 Timber.i("Another device is nearer to the speaker, not starting audio pipeline")
+                sendWakeWordDetectionStatus(detection, level, answered = false)
                 return
             }
+            sendWakeWordDetectionStatus(detection, level, answered = true)
 
             if (audioPipeline != null) {
                 audioPipeline?.stop()
@@ -677,6 +679,30 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         } else if (state.ordinal > PipelineStage.AWAITING_RESPONSE.ordinal) {
             mediaManager.thinkingPlayer.stop()
         }
+    }
+
+    // Tell Home Assistant about every wake word this device heard (also when another device
+    // answers), with the score and calibrated level, so detections can be tracked and tuned.
+    private fun sendWakeWordDetectionStatus(
+        detection: WakeWordEngineProvider.WakeWordDetection,
+        level: Float?,
+        answered: Boolean,
+    ) {
+        if (detection.wakeWordId == "manual_wake") return
+        runCatching {
+            sendStatus(buildJsonObject {
+                putJsonObject("wake_word_detection") {
+                    put("event_id", detection.timestamp)
+                    put("timestamp", isoNow())
+                    put("wake_word", detection.wakeWord)
+                    put("wake_word_id", detection.wakeWordId)
+                    put("score", detection.score)
+                    put("threshold", config.wakeWordThreshold)
+                    level?.let { put("level", it) }
+                    put("answered", answered)
+                }
+            })
+        }.onFailure { Timber.e(it, "Unable to send wake word detection status") }
     }
 
     fun muteMicrophone(muted: Boolean) {
