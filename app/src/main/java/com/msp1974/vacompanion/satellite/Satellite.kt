@@ -690,7 +690,10 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     private fun updateThinkingSound(state: PipelineStage) {
         if (state == PipelineStage.AWAITING_RESPONSE) {
             val uri = if (config.thinkingSound != "none") resolveWakeSoundUri(config.thinkingSound) else null
-            if (uri != null) mediaManager.thinkingPlayer.start(uri)
+            val intro = if (config.thinkingIntroSound != "none") resolveWakeSoundUri(config.thinkingIntroSound) else null
+            if (uri != null) {
+                mediaManager.thinkingPlayer.start(uri, intro, (config.thinkingDelay * 1000).toLong())
+            }
         } else if (state.ordinal > PipelineStage.AWAITING_RESPONSE.ordinal) {
             mediaManager.thinkingPlayer.stop()
         }

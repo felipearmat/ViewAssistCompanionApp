@@ -268,6 +268,26 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("wakeWordClipsEnabled", old, value))
         }
 
+    // Played once before the thinking sound loop starts ("none" = no intro), e.g. a spoken
+    // "let me think...". Same choices as the thinking sound. Stored on the device; HA can push it.
+    var thinkingIntroSound: String
+        get() = this.sharedPrefs.getString("thinking_intro_sound", "none") ?: "none"
+        set(value) {
+            val old = thinkingIntroSound
+            this.sharedPrefs.edit { putString("thinking_intro_sound", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("thinkingIntroSound", old, value))
+        }
+
+    // Seconds to wait after the request before the thinking sound starts, so quick answers stay
+    // silent. Stored on the device; HA can push it.
+    var thinkingDelay: Float
+        get() = this.sharedPrefs.getFloat("thinking_delay", 1.5f).coerceIn(0f, 10f)
+        set(value) {
+            val old = thinkingDelay
+            this.sharedPrefs.edit { putFloat("thinking_delay", value.coerceIn(0f, 10f)) }
+            if (old != thinkingDelay) eventBroadcaster.notifyEvent(Event("thinkingDelay", old, thinkingDelay))
+        }
+
     // Sound looped while the assistant works out its answer ("none" = off). An id from
     // availableWakeSounds, so a custom sound uploaded to Home Assistant can be used. Stored on
     // the device, so it survives a restart; HA can also push it.
@@ -658,6 +678,8 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["continue_conversation"]?.jsonPrimitive?.booleanOrNull?.let { continueConversation = it }
         settings["suppress_wake_sound"]?.jsonPrimitive?.booleanOrNull?.let { suppressWakeSound = it }
         settings["thinking_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingSound = it }
+        settings["thinking_intro_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingIntroSound = it }
+        settings["thinking_delay"]?.jsonPrimitive?.floatOrNull?.let { thinkingDelay = it }
         settings["wake_word_clips"]?.jsonPrimitive?.booleanOrNull?.let { wakeWordClipsEnabled = it }
         settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }

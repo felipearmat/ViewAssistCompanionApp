@@ -39,6 +39,16 @@ fun voiceConfig(vm: VAViewModel): ConfigSection {
                         c.availableWakeSounds.map { ConfigOption(it.id, it.name) }
                 },
                 get = { c.thinkingSound }, set = { c.thinkingSound = it }),
+            ConfigItem.Options(WAKE, "Thinking intro sound", "Played once before the thinking sound, such as a spoken 'let me think'", Icons.Default.RecordVoiceOver,
+                key = "thinking_intro_sound",
+                optionsProvider = {
+                    listOf(ConfigOption("none", "None")) +
+                        c.availableWakeSounds.map { ConfigOption(it.id, it.name) }
+                },
+                get = { c.thinkingIntroSound }, set = { c.thinkingIntroSound = it }),
+            ConfigItem.FloatValue(WAKE, "Thinking sound delay", "Seconds to wait before the thinking sound, so quick answers stay silent",
+                Icons.Default.Timer, key = "thinking_delay", min = 0f, max = 10f, step = 0.5f,
+                get = { c.thinkingDelay }, set = { c.thinkingDelay = it }),
             ConfigItem.Toggle(WAKE, "Continue conversation",
                 "Keep listening after a reply always.  When off the assistant will keep listening for a response to a question only", Icons.Default.Forum,
                 key = "continue_conversation", get = { c.continueConversation }, set = { c.continueConversation = it }),
