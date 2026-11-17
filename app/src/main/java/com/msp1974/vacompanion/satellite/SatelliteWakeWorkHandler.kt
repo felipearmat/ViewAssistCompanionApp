@@ -10,6 +10,7 @@ import com.msp1974.vacompanion.device.DeviceManager
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Permissions
 import com.msp1974.vacompanion.wakeword.DetectionRearmGate
+import com.msp1974.vacompanion.wakeword.NearMissTracker
 import com.msp1974.vacompanion.wakeword.WakeWordEngine
 import com.msp1974.vacompanion.wakeword.WakeWordEngineModel
 import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
@@ -43,6 +44,10 @@ interface IWakeWordHandler {
 
     fun onDiagnostics(level: Float, lastDetectionLevel: Float)
 
+    // A wake word that rose clearly but stayed under the threshold (its peak score), for tuning
+    // and retraining. See NearMissTracker.
+    fun onNearMiss(detection: WakeWordEngineProvider.WakeWordDetection) {}
+
     // Called when the wake word engine's audio/detection loop ends on its own (an uncancelled
     // exception), as opposed to being stopped deliberately via stop(). The caller decides
     // whether/how to recover (see issue #65 - previously nothing did, leaving capture dead).
@@ -55,6 +60,8 @@ abstract class SatelliteWakeWorkHandler(
     val scope: CoroutineScope,
     val microphone: MicrophoneAudioStream,
 ): IWakeWordHandler {
+
+    private val nearMisses = NearMissTracker()
 
     companion object {
         // Safety-net ceiling for stop() to actually observe the old engine's native teardown
@@ -189,9 +196,12 @@ abstract class SatelliteWakeWorkHandler(
                     when (it) {
                         is WakeWordEngineProvider.AudioResult.WakeDetected -> {
                             holdLastDetectionLevel(it.detection.score)
+                            if (!config.wakeLevelCalibration.isActive) {
+                                nearMisses.onScore(it.detection, System.currentTimeMillis())?.let { miss -> onNearMiss(miss) }
+                            }
                             // REARM-FILTER: the rest of a word that has already been detected is not a new detection.
                             val wakeWordId = it.detection.wakeWordId
-                            val outcome = rearmGate.onScore(wakeWordId, it.detection.score, it.detection.detected, config.wakeWordThreshold)
+                            val outcome = rearmGate.onScore(wakeWordId, it.detection.score, it.detection.detected, config.effectiveWakeWordThreshold)
                             if (outcome == DetectionRearmGate.Outcome.RESIDUAL && rearmGate.suppressed(wakeWordId) == 1) {
                                 Timber.i("Ignoring the rest of the ${it.detection.wakeWord} detection already acted on (score ${it.detection.score}); further frames are not logged")
                             }
@@ -281,7 +291,7 @@ abstract class SatelliteWakeWorkHandler(
     }
 
     private suspend fun wakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection) {
-        Timber.i("${detection.wakeWord} wake word detected at ${detection.score}, threshold is ${config.wakeWordThreshold}")
+        Timber.i("${detection.wakeWord} wake word detected at ${detection.score}, threshold is ${config.effectiveWakeWordThreshold}${if (config.musicPlaying) " (music playing)" else ""}")
         lastWakeDetectionTimestamp = detection.timestamp
         firebase.logEvent(
             FirebaseManager.WAKE_WORD_DETECTED, mapOf(

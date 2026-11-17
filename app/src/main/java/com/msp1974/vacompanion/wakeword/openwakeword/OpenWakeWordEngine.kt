@@ -230,7 +230,7 @@ class OpenWakeWordEngine(
             probabilities.removeFirst()
         probabilities.add(probability)
 
-        return probabilities.size == slidingWindowSize && probabilities.average() > config.wakeWordThreshold
+        return probabilities.size == slidingWindowSize && probabilities.average() > config.effectiveWakeWordThreshold
     }
 
     fun enable() {

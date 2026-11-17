@@ -246,6 +246,31 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Wake word threshold while this device plays music (0-1; 0 = use the normal threshold).
+    // Music lowers the score of a real wake word, so a lower bar can be set for when it plays;
+    // it is never taken below MUSIC_THRESHOLD_FLOOR. Meant to be set by a calibration that
+    // measured both the user's wake word and the music alone on the current output. Stored on
+    // the device; HA can push it.
+    var wakeWordThresholdMusic: Float
+        get() = this.sharedPrefs.getFloat("wake_word_threshold_music", 0f).coerceIn(0f, 1f)
+        set(value) {
+            val old = wakeWordThresholdMusic
+            this.sharedPrefs.edit { putFloat("wake_word_threshold_music", value.coerceIn(0f, 1f)) }
+            if (old != wakeWordThresholdMusic) eventBroadcaster.notifyEvent(Event("wakeWordThresholdMusic", old, wakeWordThresholdMusic))
+        }
+
+    // Whether this device is playing music right now (Sendspin stream or the music player).
+    @Volatile var sendspinStreaming = false
+    @Volatile var musicPlayerPlaying = false
+    val musicPlaying: Boolean get() = sendspinStreaming || musicPlayerPlaying
+
+    /** The threshold in force now: the music one while music plays (if set), else the normal one. */
+    val effectiveWakeWordThreshold: Float
+        get() {
+            val music = wakeWordThresholdMusic
+            return if (musicPlaying && music > 0f) maxOf(music, MUSIC_THRESHOLD_FLOOR) else wakeWordThreshold
+        }
+
     // Extra gain for the assistant's voice, in dB (0-12), applied with compression so it doesn't
     // clip. Stored on the device, so it survives a restart; HA can also push it.
     var voiceGainDb: Int
@@ -693,6 +718,8 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["wake_word_clips"]?.jsonPrimitive?.booleanOrNull?.let { wakeWordClipsEnabled = it }
         settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
         settings["voice_gain"]?.jsonPrimitive?.floatOrNull?.let { voiceGainDb = it.toInt() }
+        // Same scale as wake_word_threshold (1-10 from HA, stored as 0-1); 0 turns it off.
+        settings["wake_word_threshold_music"]?.jsonPrimitive?.floatOrNull?.let { wakeWordThresholdMusic = (it / 10).round(2) }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }
         settings["quick_actions"]?.jsonPrimitive?.booleanOrNull?.let { enableQuickActions = it }
         settings["custom_files"]?.let { customFiles = it }
@@ -770,6 +797,8 @@ class APPConfig @Inject constructor(val context: Context) {
     }
 
     companion object {
+        /** The music threshold is never taken below this, to keep false wakes from the music down. */
+        const val MUSIC_THRESHOLD_FLOOR = 0.3f
         const val NAME = "VACA"
         const val SERVER_PORT = 10800
         const val DEFAULT_HA_HTTP_PORT = 8123

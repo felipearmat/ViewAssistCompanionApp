@@ -471,6 +471,10 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     sendDiagnostics(level, lastDetectionLevel)
                 }
 
+                override fun onNearMiss(detection: WakeWordEngineProvider.WakeWordDetection) {
+                    handleNearMiss(detection)
+                }
+
             }.also {
                 Timber.d("Starting Wake Word Detection")
                 it.run()
@@ -724,9 +728,28 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             put("wake_word", detection.wakeWord)
             put("wake_word_id", detection.wakeWordId)
             put("score", detection.score)
-            put("threshold", config.wakeWordThreshold)
+            put("threshold", config.effectiveWakeWordThreshold)
+            put("music_playing", config.musicPlaying)
+            put("audio_output", AudioOutputRouter.activeOutputId(context, config))
             level?.let { put("level", it) }
         }
+
+    // A wake word that rose but stayed under the threshold: report it (score, music, output) so
+    // HA can tune the thresholds, and keep its audio as a "near_miss" clip for retraining.
+    private fun handleNearMiss(detection: WakeWordEngineProvider.WakeWordDetection) {
+        val level = MicLevelMonitor.calibrated(
+            microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb
+        )
+        Timber.i("Wake word near miss: ${detection.wakeWord} peaked at ${detection.score}, threshold ${config.effectiveWakeWordThreshold}${if (config.musicPlaying) " (music playing)" else ""}")
+        val data = detectionJson(detection, level)
+        runCatching {
+            sendStatus(buildJsonObject { put("wake_word_near_miss", data) })
+        }.onFailure { Timber.e(it, "Unable to send wake word near miss") }
+        if (config.wakeWordClipsEnabled && detection.score >= NEAR_MISS_CLIP_MIN_SCORE) {
+            wakeClips.onDetected(detection.timestamp, data)
+            wakeClips.finish(detection.timestamp, "near_miss")
+        }
+    }
 
     fun muteMicrophone(muted: Boolean) {
         runCatching {
@@ -1213,6 +1236,8 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     companion object {
         const val WAKE_WORD_CLIP_EVENT_TYPE = "wake_word_clip"
+        // Near misses at or above this score also send their audio (when wake_word_clips is on).
+        const val NEAR_MISS_CLIP_MIN_SCORE = 0.3f
         const val EVENT_LOCAL_WAKE_WORD_DETECTED = "localWakeWordDetected"
         const val EVENT_LOCAL_WAKE_WORD_DISMISSED = "localWakeWordDismissed"
         fun isoNow(): String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())

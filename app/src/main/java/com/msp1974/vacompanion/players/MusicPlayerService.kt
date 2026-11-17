@@ -150,6 +150,7 @@ class MusicPlayerService : Service(), EventListener {
 
     val mediaPlayerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            config.musicPlayerPlaying = isPlaying
             val event = Event("musicPlayerPlayingStatus", oldValue = !isPlaying, newValue = isPlaying)
             config.eventBroadcaster.notifyEvent(event)
 

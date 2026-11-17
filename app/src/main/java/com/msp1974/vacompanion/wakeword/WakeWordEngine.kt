@@ -141,7 +141,7 @@ open class WakeWordEngine(
                             val detectInfo = WakeWordEngineProvider.WakeWordDetection(
                                 it.detection.wakeWordId,
                                 it.detection.wakeWord,
-                                it.detection.score >= config.wakeWordThreshold,
+                                it.detection.score >= config.effectiveWakeWordThreshold,
                                 it.detection.score.round(2)
                             )
                             emit(WakeWordEngineProvider.AudioResult.WakeDetected(detectInfo))
@@ -151,7 +151,7 @@ open class WakeWordEngine(
                             val detectInfo = WakeWordEngineProvider.WakeWordDetection(
                                 it.detection.wakeWordId,
                                 it.detection.wakeWord,
-                                it.detection.score >= config.wakeWordThreshold,
+                                it.detection.score >= config.effectiveWakeWordThreshold,
                                 it.detection.score.round(2)
                             )
                             emit(WakeWordEngineProvider.AudioResult.StopDetected(detectInfo))

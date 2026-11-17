@@ -219,6 +219,7 @@ class SendspinPlayer(
     override fun onStreamStart(sampleRate: Int, channels: Int, bitDepth: Int) {
         Timber.d("Sendspin: stream start rate=$sampleRate channels=$channels bitDepth=$bitDepth")
         synchronized(nowPlayingLock) { streamActive = true }
+        config.sendspinStreaming = true
         publishNowPlaying()
         // Only one source at a time: the music player yields to Sendspin.
         config.eventBroadcaster.notifyEvent(Event("sendspinPlaybackStarted", "", ""))
@@ -236,6 +237,7 @@ class SendspinPlayer(
         output.pause()
         abandonAudioFocus()
         synchronized(nowPlayingLock) { streamActive = false }
+        config.sendspinStreaming = false
         publishNowPlaying()
     }
 
@@ -322,6 +324,7 @@ class SendspinPlayer(
         synchronized(nowPlayingLock) {
             streamActive = false
             groupPlaying = false
+            config.sendspinStreaming = false
             title = ""
             artist = ""
             album = ""
