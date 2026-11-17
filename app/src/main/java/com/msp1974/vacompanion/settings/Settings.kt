@@ -728,7 +728,8 @@ class APPConfig @Inject constructor(val context: Context) {
         const val DEFAULT_RTSP_KEYFRAME_INTERVAL_SECS = 1f
         const val DEFAULT_AUDIO_OUTPUT_ID = -1
         const val DEFAULT_AUDIO_INPUT_ID = -1
-        const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
-        const val GITHUB_RELEASES_URL = "https://github.com/msp1974/ViewAssist_Companion_App/releases"
+        // This fork publishes its own releases; the updater and the "releases" link follow it.
+        const val GITHUB_API_URL = "https://api.github.com/repos/felipearmat/ViewAssistCompanionApp/releases"
+        const val GITHUB_RELEASES_URL = "https://github.com/felipearmat/ViewAssistCompanionApp/releases"
     }
 }
