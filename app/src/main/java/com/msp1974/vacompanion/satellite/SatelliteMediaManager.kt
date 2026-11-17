@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.msp1974.vacompanion.players.AlarmService
 import com.msp1974.vacompanion.players.SoundEffectsPlayer
+import com.msp1974.vacompanion.players.ThinkingSoundPlayer
 import com.msp1974.vacompanion.players.MusicPlayerService
 import com.msp1974.vacompanion.players.VoicePlayerService
 import com.msp1974.vacompanion.settings.APPConfig
@@ -14,6 +15,7 @@ import timber.log.Timber
 @SuppressLint("UnsafeOptInUsageError")
 class SatelliteMediaManager(val context: Context, val config: APPConfig) {
     val soundPlayer = SoundEffectsPlayer(context, config)
+    val thinkingPlayer = ThinkingSoundPlayer(context, config)
     val voicePlayer = VoiceManager(context, config)
     val musicPlayer = MusicManager(context)
     val alarmPlayer = AlarmManager(context)
@@ -21,6 +23,7 @@ class SatelliteMediaManager(val context: Context, val config: APPConfig) {
     suspend fun stopAll() {
         Timber.d("Stopping media manager")
         soundPlayer.stop()
+        thinkingPlayer.release()
         voicePlayer.stop()
         musicPlayer.stop()
         alarmPlayer.stop()

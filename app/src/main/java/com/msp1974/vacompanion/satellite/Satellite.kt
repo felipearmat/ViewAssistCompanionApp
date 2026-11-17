@@ -668,6 +668,17 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     }
 
 
+    // Loop the thinking sound while the assistant works out its answer: from the transcript
+    // until the reply starts or the pipeline ends.
+    private fun updateThinkingSound(state: PipelineStage) {
+        if (state == PipelineStage.AWAITING_RESPONSE) {
+            val uri = if (config.thinkingSound != "none") resolveWakeSoundUri(config.thinkingSound) else null
+            if (uri != null) mediaManager.thinkingPlayer.start(uri)
+        } else if (state.ordinal > PipelineStage.AWAITING_RESPONSE.ordinal) {
+            mediaManager.thinkingPlayer.stop()
+        }
+    }
+
     fun muteMicrophone(muted: Boolean) {
         runCatching {
             wakeWordHandler?.engine?.setMuted(muted)
@@ -706,6 +717,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             override fun onStateChange(state: PipelineStage) {
                 Timber.d("Audio pipeline state: $state")
                 audioPipelineLastStateChange = System.currentTimeMillis()
+                updateThinkingSound(state)
                 // Past listening the kept audio is of no use any more.
                 if (state.ordinal > PipelineStage.VOICE_STARTED.ordinal) cancelDetectionBuffer()
                 // Refresh the diagnostics mode (detect/stream). Without a wake word engine there
@@ -738,6 +750,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             override fun onFinish(reason: PipelineEndReason, continueConversation: Boolean) {
                 Timber.i("Pipeline ended.  Restarting: $continueConversation")
                 cancelDetectionBuffer()
+                mediaManager.thinkingPlayer.stop()
                 // A continuing conversation keeps other devices ducked until it really finishes.
                 // This device ducked the others when it won arbitration, so it always unducks them.
                 if (!(reason == PipelineEndReason.END_OF_PIPELINE && continueConversation)) {

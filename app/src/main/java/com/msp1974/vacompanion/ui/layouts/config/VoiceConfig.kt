@@ -32,6 +32,13 @@ fun voiceConfig(vm: VAViewModel): ConfigSection {
                         c.availableWakeSounds.map { ConfigOption(it.id, it.name) }
                 },
                 get = { c.wakeWordSound }, set = { c.wakeWordSound = it }),
+            ConfigItem.Options(WAKE, "Thinking sound", "Sound looped while the assistant works out its answer", Icons.Default.HourglassTop,
+                key = "thinking_sound",
+                optionsProvider = {
+                    listOf(ConfigOption("none", "None")) +
+                        c.availableWakeSounds.map { ConfigOption(it.id, it.name) }
+                },
+                get = { c.thinkingSound }, set = { c.thinkingSound = it }),
             ConfigItem.Toggle(WAKE, "Continue conversation",
                 "Keep listening after a reply always.  When off the assistant will keep listening for a response to a question only", Icons.Default.Forum,
                 key = "continue_conversation", get = { c.continueConversation }, set = { c.continueConversation = it }),

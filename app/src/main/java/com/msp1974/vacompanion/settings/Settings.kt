@@ -246,6 +246,17 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Sound looped while the assistant works out its answer ("none" = off). An id from
+    // availableWakeSounds, so a custom sound uploaded to Home Assistant can be used. Stored on
+    // the device, so it survives a restart; HA can also push it.
+    var thinkingSound: String
+        get() = this.sharedPrefs.getString("thinking_sound", "none") ?: "none"
+        set(value) {
+            val old = thinkingSound
+            this.sharedPrefs.edit { putString("thinking_sound", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("thinkingSound", old, value))
+        }
+
     var micGain: Int by Delegates.observable(DEFAULT_MIC_GAIN) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -624,6 +635,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["screen_orientation_mode"]?.jsonPrimitive?.contentOrNull?.let { screenOrientationMode = it }
         settings["continue_conversation"]?.jsonPrimitive?.booleanOrNull?.let { continueConversation = it }
         settings["suppress_wake_sound"]?.jsonPrimitive?.booleanOrNull?.let { suppressWakeSound = it }
+        settings["thinking_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingSound = it }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }
         settings["quick_actions"]?.jsonPrimitive?.booleanOrNull?.let { enableQuickActions = it }
         settings["custom_files"]?.let { customFiles = it }
