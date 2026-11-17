@@ -246,6 +246,16 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Extra gain for the assistant's voice, in dB (0-12), applied with compression so it doesn't
+    // clip. Stored on the device, so it survives a restart; HA can also push it.
+    var voiceGainDb: Int
+        get() = this.sharedPrefs.getInt("voice_gain", 0).coerceIn(0, 12)
+        set(value) {
+            val old = voiceGainDb
+            this.sharedPrefs.edit { putInt("voice_gain", value.coerceIn(0, 12)) }
+            if (old != voiceGainDb) eventBroadcaster.notifyEvent(Event("voiceGainDb", old, voiceGainDb))
+        }
+
     // WebRTC echo cancellation with the music this device plays (Sendspin) as reference, so the
     // microphone hears less of it. Off by default; applies the next time the microphone opens.
     // Stored on the device, so it survives a restart; HA can also push it.
@@ -682,6 +692,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["thinking_delay"]?.jsonPrimitive?.floatOrNull?.let { thinkingDelay = it }
         settings["wake_word_clips"]?.jsonPrimitive?.booleanOrNull?.let { wakeWordClipsEnabled = it }
         settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
+        settings["voice_gain"]?.jsonPrimitive?.floatOrNull?.let { voiceGainDb = it.toInt() }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }
         settings["quick_actions"]?.jsonPrimitive?.booleanOrNull?.let { enableQuickActions = it }
         settings["custom_files"]?.let { customFiles = it }

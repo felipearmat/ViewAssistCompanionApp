@@ -1,5 +1,6 @@
 package com.msp1974.vacompanion.players
 
+import android.media.audiofx.LoudnessEnhancer
 import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
@@ -99,6 +100,7 @@ class VoicePlayerService : Service(), EventListener {
         releaseTrack()
         mediaPlayer = createPlayer(rate, width, channels)
         mediaPlayer?.setVolume(1.0f)
+        applyVoiceGain()
 
         try {
             mediaPlayer?.play()
@@ -144,7 +146,28 @@ class VoicePlayerService : Service(), EventListener {
         }
     }
 
+    // Extra loudness for the assistant's voice (voice_gain, dB), so a TTS voice that already
+    // peaks at full scale can match louder music. Android's LoudnessEnhancer compresses as it
+    // boosts, so the voice doesn't clip.
+    private var loudness: LoudnessEnhancer? = null
+
+    private fun applyVoiceGain() {
+        val gainDb = config.voiceGainDb
+        if (gainDb <= 0) return
+        val track = mediaPlayer ?: return
+        try {
+            loudness = LoudnessEnhancer(track.audioSessionId).apply {
+                setTargetGain(gainDb * 100) // millibels
+                enabled = true
+            }
+        } catch (e: Exception) {
+            Timber.w("Voice gain of $gainDb dB not available: ${e.message}")
+        }
+    }
+
     private fun releaseTrack() {
+        loudness?.let { runCatching { it.release() } }
+        loudness = null
         isReady = false
         isPlaying = false
         val track = mediaPlayer ?: return
