@@ -85,8 +85,9 @@ open class MicroWakeWordEngine (
                         emit(AudioResult.AudioLevel(audioDSP.audioLevel(audioDSP.normaliseAudioBuffer(frame))))
                     }
 
-                    // Only for the wake word recording log, which needs a rolling history
-                    if (config.recordingWakewordEnabled) {
+                    // Only for the wake word recording log and wake word clips, which need a
+                    // rolling history
+                    if (config.recordingWakewordEnabled || config.wakeWordClipsEnabled) {
                         emit(AudioResult.Audio(frame, timestamp = frameTimestamp))
                     }
 

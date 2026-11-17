@@ -121,6 +121,11 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     // subscribe to it; it is open only while at least one of them is.
     private val microphone = MicrophoneAudioStream(context, deviceManager, scope)
 
+    // Audio around each wake word detection, sent to HA with its outcome (wake_word_clips).
+    private val wakeClips = WakeClipRecorder(scope, config.sampleRate) { meta, wav ->
+        sendCustomEvent(WAKE_WORD_CLIP_EVENT_TYPE, meta, wav)
+    }
+
     private var soundEffectFinishTime: Long = 0
     private var currentWakeWordSoundUri: android.net.Uri? = null
 
@@ -367,6 +372,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         audioDeviceHandler.removeCallbacks(audioDevicesChanged)
 
         stopAudioPipeline()
+        wakeClips.clear()
 
         mediaManager.stopAll()
 
@@ -442,6 +448,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
                 override suspend fun onAudio(audio: WakeWordEngineProvider.AudioResult.Audio) {
                     audioLogManager.onAudio(audio.audio)
+                    if (config.wakeWordClipsEnabled) wakeClips.onAudio(audio.audio)
                 }
 
                 override suspend fun onWakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection) {
@@ -574,6 +581,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             // Every device that heard the wake word reacts at once: the sound tells the user it was
             // heard, and the audio from now on is kept, so nothing said while the devices agree
             // who answers is lost. Only the winner uses the audio; the others drop it.
+            if (config.wakeWordClipsEnabled && detection.wakeWordId != "manual_wake") {
+                wakeClips.onDetected(detection.timestamp, detectionJson(detection, level))
+            }
             buffer = DetectionBuffer(microphone.audio, scope).also { detectionBuffer = it }
             playWakeWordDetectionSound()
 
@@ -585,6 +595,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             if (!won) {
                 Timber.i("Another device is nearer to the speaker, not starting audio pipeline")
                 sendWakeWordDetectionStatus(detection, level, answered = false)
+                wakeClips.finish(detection.timestamp, "other_device")
                 return
             }
             sendWakeWordDetectionStatus(detection, level, answered = true)
@@ -691,19 +702,24 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         if (detection.wakeWordId == "manual_wake") return
         runCatching {
             sendStatus(buildJsonObject {
-                putJsonObject("wake_word_detection") {
-                    put("event_id", detection.timestamp)
-                    put("timestamp", isoNow())
-                    put("wake_word", detection.wakeWord)
-                    put("wake_word_id", detection.wakeWordId)
-                    put("score", detection.score)
-                    put("threshold", config.wakeWordThreshold)
-                    level?.let { put("level", it) }
+                put("wake_word_detection", buildJsonObject {
+                    detectionJson(detection, level).forEach { (k, v) -> put(k, v) }
                     put("answered", answered)
-                }
+                })
             })
         }.onFailure { Timber.e(it, "Unable to send wake word detection status") }
     }
+
+    private fun detectionJson(detection: WakeWordEngineProvider.WakeWordDetection, level: Float?) =
+        buildJsonObject {
+            put("event_id", detection.timestamp)
+            put("timestamp", isoNow())
+            put("wake_word", detection.wakeWord)
+            put("wake_word_id", detection.wakeWordId)
+            put("score", detection.score)
+            put("threshold", config.wakeWordThreshold)
+            level?.let { put("level", it) }
+        }
 
     fun muteMicrophone(muted: Boolean) {
         runCatching {
@@ -763,20 +779,24 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
             override fun onRequestTranscript(pipelineId: Long, text: String) {
                 audioLogManager.onRequest(pipelineId, text)
+                wakeClips.onTranscript(pipelineId, text)
             }
 
             override fun onResponseTranscript(pipelineId: Long, text: String) {
                 audioLogManager.onResponse(pipelineId, text)
+                wakeClips.onResponse(pipelineId, text)
             }
 
             override fun onErrorMessage(pipelineId: Long, text: String) {
                 audioLogManager.onErrorResponse(pipelineId, text)
+                wakeClips.onError(pipelineId, text)
             }
 
             override fun onFinish(reason: PipelineEndReason, continueConversation: Boolean) {
                 Timber.i("Pipeline ended.  Restarting: $continueConversation")
                 cancelDetectionBuffer()
                 mediaManager.thinkingPlayer.stop()
+                wakeClips.finish(pipelineId, wakeClips.outcomeFor(reason, pipelineId))
                 // A continuing conversation keeps other devices ducked until it really finishes.
                 // This device ducked the others when it won arbitration, so it always unducks them.
                 if (!(reason == PipelineEndReason.END_OF_PIPELINE && continueConversation)) {
@@ -1185,6 +1205,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     }
 
     companion object {
+        const val WAKE_WORD_CLIP_EVENT_TYPE = "wake_word_clip"
         fun isoNow(): String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
 
         private const val AUDIO_DEVICE_DEBOUNCE_MS = 1000L

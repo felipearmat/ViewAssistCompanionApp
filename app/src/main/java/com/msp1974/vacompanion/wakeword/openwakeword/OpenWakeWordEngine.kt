@@ -164,8 +164,9 @@ class OpenWakeWordEngine(
                         emit(AudioResult.AudioLevel(AudioDSP().audioLevel(normalisedAudio)))
                     }
 
-                    // Only for the wake word recording log, which needs a rolling history
-                    if (config.recordingWakewordEnabled) {
+                    // Only for the wake word recording log and wake word clips, which need a
+                    // rolling history
+                    if (config.recordingWakewordEnabled || config.wakeWordClipsEnabled) {
                         emit(AudioResult.Audio(frame, timestamp = frameTimestamp))
                     }
 

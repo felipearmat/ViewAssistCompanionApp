@@ -246,6 +246,17 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Send Home Assistant the audio around each wake word detection, with its outcome, so the
+    // wake word model can be retrained on real use. Off by default. Stored on the device, so it
+    // survives a restart; HA can also push it.
+    var wakeWordClipsEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("wake_word_clips", false)
+        set(value) {
+            val old = wakeWordClipsEnabled
+            this.sharedPrefs.edit { putBoolean("wake_word_clips", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("wakeWordClipsEnabled", old, value))
+        }
+
     // Sound looped while the assistant works out its answer ("none" = off). An id from
     // availableWakeSounds, so a custom sound uploaded to Home Assistant can be used. Stored on
     // the device, so it survives a restart; HA can also push it.
@@ -636,6 +647,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["continue_conversation"]?.jsonPrimitive?.booleanOrNull?.let { continueConversation = it }
         settings["suppress_wake_sound"]?.jsonPrimitive?.booleanOrNull?.let { suppressWakeSound = it }
         settings["thinking_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingSound = it }
+        settings["wake_word_clips"]?.jsonPrimitive?.booleanOrNull?.let { wakeWordClipsEnabled = it }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }
         settings["quick_actions"]?.jsonPrimitive?.booleanOrNull?.let { enableQuickActions = it }
         settings["custom_files"]?.let { customFiles = it }
