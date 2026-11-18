@@ -2,6 +2,7 @@ package com.msp1974.vacompanion.satellite
 
 import android.content.Context
 import com.msp1974.vacompanion.audio.AudioDSP
+import com.msp1974.vacompanion.audio.EndOfSpeechDetector
 import com.msp1974.vacompanion.satellite.Satellite.Companion.isoNow
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.Event
@@ -91,6 +92,9 @@ abstract class SatelliteAudioPipeline(
 
     companion object {
         val CONTINUATION_STOP_WORDS = listOf("never mind")
+        // From the start of the pipeline until the reply starts playing. Speech, a slow
+        // transcription and a slow (e.g. cloud) agent can together take well over 20 s.
+        const val PIPELINE_TIMEOUT_SECONDS = 75
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -98,6 +102,10 @@ abstract class SatelliteAudioPipeline(
     private var audioInMessageQueue = Channel<WyomingPacket>(capacity = 1000)
     private var micJob: Job? = null
     private val audioDSP = AudioDSP()
+    // Local end of speech, for replies HA's voice detection misses (local_end_of_speech). Only in a
+    // continued conversation: after a wake word the audio starts with the wake sound, which could
+    // pass for speech and end the request during the pause before the command.
+    private val endOfSpeech = EndOfSpeechDetector(config.sampleRate)
     private var lastRequestTranscript = ""
     private var result: PipelineEndReason = PipelineEndReason.NONE
     private var shouldContinueConversation = config.continueConversation
@@ -125,6 +133,11 @@ abstract class SatelliteAudioPipeline(
             micJob = scope.launch(Dispatchers.Default) {
                 microphone.collect { frame ->
                     sendMessage(buildAudioPacketMessage(audioDSP.shortArrayToByteBuffer(frame)))
+                    if (config.localEndOfSpeech && isContinuation && isListening &&
+                        endOfSpeech.onFrame(frame) == EndOfSpeechDetector.Result.SPEECH_ENDED
+                    ) {
+                        endListeningLocally()
+                    }
                     if (config.diagnosticsEnabled) {
                         onAudioLevel(audioDSP.audioLevel(audioDSP.normaliseAudioBuffer(frame)))
                     }
@@ -140,6 +153,15 @@ abstract class SatelliteAudioPipeline(
     private val isContinuation
         get() = pipelineStartMode == PipelineStartMode.CONTINUE_CONVERSATION
 
+    // The device heard speech end before HA said so: stop streaming and wait for the transcript,
+    // as if HA had sent voice-stopped.
+    private fun endListeningLocally() {
+        if (!isListening) return
+        Timber.i("Pipeline [$pipelineId] end of speech detected locally, stopping audio")
+        sendMessage(buildAudioStopMessage())
+        pipelineStage = PipelineStage.VOICE_STOPPED
+    }
+
     fun run(startStage: PipelineStartMode = PipelineStartMode.WAKE_WORD_DETECTED) {
         scope.launch {
             start(startStage)
@@ -149,7 +171,7 @@ abstract class SatelliteAudioPipeline(
     fun watchDogTimer() {
         scope.launch {
             try {
-                withTimeout(20.seconds) {
+                withTimeout(PIPELINE_TIMEOUT_SECONDS.seconds) {
                     while (pipelineStage != PipelineStage.STREAMING_TTS) {
                         if (hasExceededTimeInStage()) {
                             stop(PipelineEndReason.TIMED_OUT)
@@ -169,7 +191,8 @@ abstract class SatelliteAudioPipeline(
 
         return when(pipelineStage) {
             PipelineStage.STARTED -> timeInStage >  5
-            PipelineStage.LISTENING -> timeInStage > if (isContinuation) 5 else 5
+            // Once the device has heard speech itself, give it as long as HA gives speech.
+            PipelineStage.LISTENING -> timeInStage > if (config.localEndOfSpeech && isContinuation && endOfSpeech.speechSeen) 20 else 5
             PipelineStage.VOICE_STARTED -> timeInStage > 20
             PipelineStage.AWAITING_TTS -> timeInStage > 5
             else -> false
