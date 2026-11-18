@@ -1,5 +1,6 @@
 package com.msp1974.vacompanion.wyoming
 
+import kotlinx.serialization.json.JsonPrimitive
 import com.msp1974.vacompanion.device.DeviceManager
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.JsonObject
@@ -29,6 +30,11 @@ class WyomingCapabilitiesBuilder @Inject constructor(deviceManager: DeviceManage
                     })
                 }
             }
+            // casa extension (docs/PROTOCOL.md in felipearmat/vaca-linux): version and features,
+            // so the integration creates only what the device supports.
+            put("has_screen", true)
+            put("casa_protocol", CASA_PROTOCOL)
+            putJsonArray("casa_features") { CASA_FEATURES.forEach { add(JsonPrimitive(it)) } }
             putJsonArray("alarms") {
                 availableAlarms.forEach { alarm ->
                     add(buildJsonObject {
@@ -40,3 +46,10 @@ class WyomingCapabilitiesBuilder @Inject constructor(deviceManager: DeviceManage
         }
     }
 }
+
+const val CASA_PROTOCOL = 1
+val CASA_FEATURES = listOf(
+    "thinking_sound", "thinking_intro_sound", "thinking_delay", "voice_gain", "echo_cancellation",
+    "wake_word_clips", "wake_word_threshold_music", "local_end_of_speech", "assist_indicator",
+    "wake_word_detection", "wake_word_near_miss",
+)
