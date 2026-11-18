@@ -1,5 +1,6 @@
 package com.msp1974.vacompanion
 
+import com.msp1974.vacompanion.ui.components.AssistIndicatorBar
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
@@ -200,6 +201,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                                 }
                             }
                         }
+
+                        // What the voice assistant is doing (assist_indicator), over any screen.
+                        AssistIndicatorBar()
 
                         vaUiState.onboardingDeviceId?.let { defaultId ->
                             UUIDEditDialog(

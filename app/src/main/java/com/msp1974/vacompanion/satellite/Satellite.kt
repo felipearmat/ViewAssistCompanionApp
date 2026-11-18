@@ -373,6 +373,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
         stopAudioPipeline()
         wakeClips.clear()
+        indicate(AssistIndicator.State.IDLE)
 
         mediaManager.stopAll()
 
@@ -588,6 +589,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             // Turn this device's music down at once, so the rest of the request is heard over it;
             // the voice player's audio focus keeps it down once the pipeline starts.
             config.eventBroadcaster.notifyEvent(Event(EVENT_LOCAL_WAKE_WORD_DETECTED, "", ""))
+            indicate(AssistIndicator.State.LISTENING)
             if (config.wakeWordClipsEnabled && detection.wakeWordId != "manual_wake") {
                 wakeClips.onDetected(detection.timestamp, detectionJson(detection, level))
             }
@@ -604,6 +606,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 sendWakeWordDetectionStatus(detection, level, answered = false)
                 wakeClips.finish(detection.timestamp, "other_device")
                 config.eventBroadcaster.notifyEvent(Event(EVENT_LOCAL_WAKE_WORD_DISMISSED, "", ""))
+                indicate(AssistIndicator.State.IDLE)
                 return
             }
             sendWakeWordDetectionStatus(detection, level, answered = true)
@@ -751,6 +754,11 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         }
     }
 
+    // The on-screen indicator follows the assistant only when assist_indicator is on.
+    private fun indicate(state: AssistIndicator.State) {
+        AssistIndicator.set(if (config.assistIndicatorEnabled) state else AssistIndicator.State.IDLE)
+    }
+
     fun muteMicrophone(muted: Boolean) {
         runCatching {
             wakeWordHandler?.engine?.setMuted(muted)
@@ -790,6 +798,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 Timber.d("Audio pipeline state: $state")
                 audioPipelineLastStateChange = System.currentTimeMillis()
                 updateThinkingSound(state)
+                indicate(AssistIndicator.forStage(state))
                 // Past listening the kept audio is of no use any more.
                 if (state.ordinal > PipelineStage.VOICE_STARTED.ordinal) cancelDetectionBuffer()
                 // Refresh the diagnostics mode (detect/stream). Without a wake word engine there
@@ -803,8 +812,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             }
 
             override fun onAudioLevel(level: Float) {
+                if (config.assistIndicatorEnabled) AssistIndicator.setLevel(level)
                 // With a wake word engine running its own level updates already cover this.
-                if (wakeWordHandler?.engine == null) sendDiagnostics(level, lastDetectionLevel)
+                if (config.diagnosticsEnabled && wakeWordHandler?.engine == null) sendDiagnostics(level, lastDetectionLevel)
             }
 
             override fun onRequestTranscript(pipelineId: Long, text: String) {
@@ -827,6 +837,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 cancelDetectionBuffer()
                 mediaManager.thinkingPlayer.stop()
                 wakeClips.finish(pipelineId, wakeClips.outcomeFor(reason, pipelineId))
+                indicate(
+                    if (reason == PipelineEndReason.ERRORED) AssistIndicator.State.ERROR else AssistIndicator.State.IDLE
+                )
                 // A continuing conversation keeps other devices ducked until it really finishes.
                 // This device ducked the others when it won arbitration, so it always unducks them.
                 if (!(reason == PipelineEndReason.END_OF_PIPELINE && continueConversation)) {

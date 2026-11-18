@@ -246,6 +246,16 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Show what the assistant is doing (listening, thinking, speaking) as a bar along the bottom
+    // of the screen; nothing while idle. Off by default. Stored on the device; HA can push it.
+    var assistIndicatorEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("assist_indicator", false)
+        set(value) {
+            val old = assistIndicatorEnabled
+            this.sharedPrefs.edit { putBoolean("assist_indicator", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("assistIndicatorEnabled", old, value))
+        }
+
     // Detect the end of speech on the device too, in a continued conversation, so a short reply
     // that HA's voice detection misses ends the listening at once instead of at the timeout.
     // Off by default. Stored on the
@@ -731,6 +741,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
         settings["voice_gain"]?.jsonPrimitive?.floatOrNull?.let { voiceGainDb = it.toInt() }
         settings["local_end_of_speech"]?.jsonPrimitive?.booleanOrNull?.let { localEndOfSpeech = it }
+        settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         // Same scale as wake_word_threshold (1-10 from HA, stored as 0-1); 0 turns it off.
         settings["wake_word_threshold_music"]?.jsonPrimitive?.floatOrNull?.let { wakeWordThresholdMusic = (it / 10).round(2) }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }

@@ -138,7 +138,7 @@ abstract class SatelliteAudioPipeline(
                     ) {
                         endListeningLocally()
                     }
-                    if (config.diagnosticsEnabled) {
+                    if (config.diagnosticsEnabled || config.assistIndicatorEnabled) {
                         onAudioLevel(audioDSP.audioLevel(audioDSP.normaliseAudioBuffer(frame)))
                     }
                 }
