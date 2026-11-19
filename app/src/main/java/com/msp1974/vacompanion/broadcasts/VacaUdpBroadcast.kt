@@ -482,6 +482,15 @@ class VacaUdpBroadcast(
 
     private fun masterData() = buildJsonObject { put(DATA_PRIORITY, JsonPrimitive(config.masterPriority)) }
 
+    // Last address heard from each peer, with when, for the unicast copies (see send).
+    private val peerAddressBook = ConcurrentHashMap<String, Pair<InetAddress, Long>>()
+
+    private fun peerAddresses(): List<InetAddress> {
+        val now = SystemClock.elapsedRealtime()
+        peerAddressBook.entries.removeIf { now - it.value.second > PeerPresence.PEER_TIMEOUT_MS }
+        return peerAddressBook.values.map { it.first }.distinct()
+    }
+
     // Devices that won a wake word and haven't completed their pipeline, with when they won.
     private val answering = ConcurrentHashMap<String, Long>()
 
@@ -569,12 +578,17 @@ class VacaUdpBroadcast(
                 // Subnet broadcast is delivered on networks that drop the limited broadcast address.
                 // Only one target is used: sending to both makes every receiver see each message twice.
                 val target = subnetBroadcastAddress() ?: InetAddress.getByName("255.255.255.255")
+                // Also straight to every live peer: some phones (a Samsung A20 on 2.4 GHz) never
+                // receive broadcasts, even with the multicast lock, though theirs reach the others.
+                val targets = listOf(target) + peerAddresses()
                 repeat(copies) { copy ->
                     if (copy > 0) delay(REDUNDANT_GAP_MS.milliseconds)
-                    try {
-                        socket.send(DatagramPacket(payload, payload.size, target, PORT))
-                    } catch (e: Exception) {
-                        Timber.d("VacaUdpBroadcast: send to $target failed: ${e.message}")
+                    targets.forEach { address ->
+                        try {
+                            socket.send(DatagramPacket(payload, payload.size, address, PORT))
+                        } catch (e: Exception) {
+                            Timber.d("VacaUdpBroadcast: send to $address failed: ${e.message}")
+                        }
                     }
                 }
                 // if (type != VacaBroadcastType.MASTER_HEARTBEAT) Timber.d("VacaUdpBroadcast: sent $type")
@@ -625,6 +639,7 @@ class VacaUdpBroadcast(
         }
         // Any message shows the sender is around; presence and detections also say its wake word.
         presence.seen(message.senderId, message.data[DATA_WAKE_WORD]?.jsonPrimitive?.contentOrNull)
+        peerAddressBook[message.senderId] = message.sourceAddress to SystemClock.elapsedRealtime()
         //if (message.type != VacaBroadcastType.MASTER_HEARTBEAT) Timber.d("VacaUdpBroadcast: received ${message.type} from ${message.senderId}")
         handlers[message.type]?.forEach {
             try {
