@@ -148,6 +148,10 @@ class VacaUdpBroadcast(
         // A hello is answered after a random delay up to this, so a room of devices doesn't all reply at once.
         private const val PRESENCE_REPLY_JITTER_MS = 500
         const val DATA_ID = "id"
+        // Master priority (master_priority setting) carried by claims and heartbeats.
+        const val DATA_PRIORITY = "priority"
+        // Message id, the same for every copy of a message sent more than once (see send).
+        const val DATA_MESSAGE_ID = "mid"
         const val DATA_WINNER = "winner"
         const val DATA_IDS = "ids"
 
@@ -158,6 +162,21 @@ class VacaUdpBroadcast(
 
         // How long a device waits for the master's decision before assuming it is gone and going ahead.
         private const val DECISION_TIMEOUT_MS = 1_500L
+
+        // Arbitration and ducking messages are sent this many times, this far apart, as Wi-Fi
+        // broadcasts are not retransmitted and power-saving phones miss some; receivers drop the
+        // repeats by message id.
+        private const val REDUNDANT_COPIES = 3
+        private const val REDUNDANT_GAP_MS = 25L
+        private val REDUNDANT_TYPES = setOf(
+            VacaBroadcastType.WAKE_DETECTION, VacaBroadcastType.WAKE_DECISION,
+            VacaBroadcastType.DUCK, VacaBroadcastType.PIPELINE_COMPLETED,
+        )
+
+        // A device that won a wake word is taken as answering until it says its pipeline completed,
+        // or for at most this long; meanwhile other devices ignore their own detections.
+        private const val ANSWERING_TIMEOUT_MS = 60_000L
+        private const val SEEN_MESSAGES_MAX = 512
 
         private const val HEARTBEAT_INTERVAL_MS = 2_000L
         private const val HEARTBEAT_TIMEOUT_MS = 6_000L
@@ -189,11 +208,11 @@ class VacaUdpBroadcast(
         instance = this
         config.eventBroadcaster.addListener(this)
 
-        addHandler(VacaBroadcastType.MASTER_CLAIM) { msg -> onMasterSeen(msg.senderId) }
-        addHandler(VacaBroadcastType.MASTER_HEARTBEAT) { msg -> onMasterSeen(msg.senderId) }
+        addHandler(VacaBroadcastType.MASTER_CLAIM) { msg -> onMasterSeen(msg.senderId, priorityOf(msg)) }
+        addHandler(VacaBroadcastType.MASTER_HEARTBEAT) { msg -> onMasterSeen(msg.senderId, priorityOf(msg)) }
         // A device just came up and doesn't know the master: tell it straight away.
         addHandler(VacaBroadcastType.DEVICE_HELLO) {
-            if (isMaster) send(VacaBroadcastType.MASTER_HEARTBEAT)
+            if (isMaster) send(VacaBroadcastType.MASTER_HEARTBEAT, masterData())
             // ...and tell it who else is here, so it needn't wait to hear from each of us.
             scope.launch {
                 delay((0..PRESENCE_REPLY_JITTER_MS).random().milliseconds)
@@ -222,6 +241,7 @@ class VacaUdpBroadcast(
             }
         }
         addHandler(VacaBroadcastType.PIPELINE_COMPLETED) { msg ->
+            answering.remove(msg.senderId)
             config.eventBroadcaster.notifyEvent(Event(EVENT_REMOTE_PIPELINE_COMPLETED, "", msg))
         }
 
@@ -246,6 +266,9 @@ class VacaUdpBroadcast(
     // This device's reported detections waiting for the master's decision.
     private val awaiting = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val detectionCounter = AtomicLong()
+    // Starts at the boot time so a restarted device's ids don't repeat ones the others still remember.
+    private val messageCounter = AtomicLong(System.currentTimeMillis())
+    private val seenMessages: MutableSet<String> = java.util.Collections.newSetFromMap(ConcurrentHashMap())
 
     /**
      * Reports a wake word detection with its [score] and returns whether this device should start
@@ -266,6 +289,14 @@ class VacaUdpBroadcast(
      */
     suspend fun arbitrateWakeWord(score: Float, levelDb: Float? = null, contest: Boolean = true): Boolean {
         val wakeWordKey = key(config.wakeWord)
+        // Another device is answering (it won a wake word and hasn't finished): what this device
+        // heard is most likely that device's voice or the same conversation, so it stays quiet.
+        if (contest && config.wakeWordArbitrationEnabled) {
+            otherAnswering()?.let { peer ->
+                Timber.i("VacaUdpBroadcast: $peer is answering, ignoring this detection")
+                return false
+            }
+        }
         if (!contest || !config.wakeWordArbitrationEnabled || wakeWordKey.isEmpty() || masterId == null) {
             sendDuck()
             return true
@@ -336,6 +367,7 @@ class VacaUdpBroadcast(
     }
 
     private fun completeAwaiting(winner: String, ids: List<String>) {
+        markAnswering(winner)
         ids.forEach { awaiting[it]?.complete(winner) }
     }
 
@@ -408,14 +440,41 @@ class VacaUdpBroadcast(
         completeAwaiting(winner, ids) // our own broadcasts don't loop back to us
     }
 
-    /** A claim or heartbeat arrived. The lowest id wins if two devices both think they are master. */
-    private fun onMasterSeen(sender: String) {
+    /**
+     * A claim or heartbeat arrived. The highest master_priority wins, then the lowest id, if two
+     * devices both think they are master.
+     */
+    private fun onMasterSeen(sender: String, priority: Int) {
         val current = masterId
-        if (current == null || current == sender || sender < current) {
+        val currentPriority = if (current == config.uuid) config.masterPriority else masterPriority
+        val better = priority > currentPriority || (priority == currentPriority && current != null && sender < current)
+        if (current == null || current == sender || better) {
             if (current == config.uuid && sender != current) Timber.i("VacaUdpBroadcast: $sender is master, standing down")
             masterId = sender
+            masterPriority = priority
             lastMasterSeen = SystemClock.elapsedRealtime()
         }
+    }
+
+    private fun priorityOf(msg: VacaBroadcastMessage) = msg.data[DATA_PRIORITY]?.jsonPrimitive?.intOrNull ?: 0
+
+    @Volatile private var masterPriority = 0
+
+    private fun masterData() = buildJsonObject { put(DATA_PRIORITY, JsonPrimitive(config.masterPriority)) }
+
+    // Devices that won a wake word and haven't completed their pipeline, with when they won.
+    private val answering = ConcurrentHashMap<String, Long>()
+
+    /** [winnerId] is a detection id, "<device uuid>-<counter>". */
+    private fun markAnswering(winnerId: String) {
+        val device = winnerId.substringBeforeLast('-')
+        if (device.isNotEmpty() && device != config.uuid) answering[device] = SystemClock.elapsedRealtime()
+    }
+
+    private fun otherAnswering(): String? {
+        val now = SystemClock.elapsedRealtime()
+        answering.entries.removeIf { now - it.value > ANSWERING_TIMEOUT_MS }
+        return answering.keys.firstOrNull()
     }
 
     private suspend fun masterLoop() {
@@ -426,9 +485,16 @@ class VacaUdpBroadcast(
             val now = SystemClock.elapsedRealtime()
             if (isMaster) {
                 if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-                    send(VacaBroadcastType.MASTER_HEARTBEAT)
+                    send(VacaBroadcastType.MASTER_HEARTBEAT, masterData())
                     lastHeartbeat = now
                 }
+            } else if (masterId != null && config.masterPriority > masterPriority) {
+                // A higher priority device takes over from the current master.
+                Timber.i("VacaUdpBroadcast: priority ${config.masterPriority} > master $masterId's $masterPriority, claiming")
+                masterId = config.uuid
+                lastMasterSeen = now
+                send(VacaBroadcastType.MASTER_CLAIM, masterData())
+                lastHeartbeat = now
             } else if (now - lastMasterSeen > HEARTBEAT_TIMEOUT_MS) {
                 val seen = lastMasterSeen
                 masterId = null
@@ -437,7 +503,7 @@ class VacaUdpBroadcast(
                     Timber.i("VacaUdpBroadcast: no master heard, claiming")
                     masterId = config.uuid
                     lastMasterSeen = SystemClock.elapsedRealtime()
-                    send(VacaBroadcastType.MASTER_CLAIM)
+                    send(VacaBroadcastType.MASTER_CLAIM, masterData())
                     lastHeartbeat = lastMasterSeen
                 }
             }
@@ -463,22 +529,30 @@ class VacaUdpBroadcast(
     fun send(type: String, data: JsonObject = JsonObject(emptyMap())) {
         scope.launch {
             try {
+                val copies = if (type in REDUNDANT_TYPES) REDUNDANT_COPIES else 1
+                val extra = mutableMapOf<String, kotlinx.serialization.json.JsonElement>(
+                    DATA_DUCK_GROUP to JsonPrimitive(config.duckGroupKey)
+                )
+                if (copies > 1) extra[DATA_MESSAGE_ID] = JsonPrimitive(messageCounter.incrementAndGet())
                 val payload = buildJsonObject {
                     put("magic", JsonPrimitive(MAGIC))
                     put("v", JsonPrimitive(VERSION))
                     put("type", JsonPrimitive(type))
                     put("sender", JsonPrimitive(config.uuid))
-                    put("data", JsonObject(data + (DATA_DUCK_GROUP to JsonPrimitive(config.duckGroupKey))))
+                    put("data", JsonObject(data + extra))
                 }.toString().toByteArray()
 
                 val socket = sendSocket ?: DatagramSocket().apply { broadcast = true }.also { sendSocket = it }
                 // Subnet broadcast is delivered on networks that drop the limited broadcast address.
                 // Only one target is used: sending to both makes every receiver see each message twice.
                 val target = subnetBroadcastAddress() ?: InetAddress.getByName("255.255.255.255")
-                try {
-                    socket.send(DatagramPacket(payload, payload.size, target, PORT))
-                } catch (e: Exception) {
-                    Timber.d("VacaUdpBroadcast: send to $target failed: ${e.message}")
+                repeat(copies) { copy ->
+                    if (copy > 0) delay(REDUNDANT_GAP_MS.milliseconds)
+                    try {
+                        socket.send(DatagramPacket(payload, payload.size, target, PORT))
+                    } catch (e: Exception) {
+                        Timber.d("VacaUdpBroadcast: send to $target failed: ${e.message}")
+                    }
                 }
                 // if (type != VacaBroadcastType.MASTER_HEARTBEAT) Timber.d("VacaUdpBroadcast: sent $type")
             } catch (e: Exception) {
@@ -520,6 +594,11 @@ class VacaUdpBroadcast(
     private fun handlePacket(packet: DatagramPacket) {
         val message = parse(packet) ?: return
         if (message.senderId == config.uuid) return
+        // Repeats of a message sent more than once carry the same id: handle it only once.
+        message.data[DATA_MESSAGE_ID]?.jsonPrimitive?.contentOrNull?.let { mid ->
+            if (!seenMessages.add("${message.senderId}:$mid")) return
+            if (seenMessages.size > SEEN_MESSAGES_MAX) seenMessages.clear()
+        }
         // Any message shows the sender is around; presence and detections also say its wake word.
         presence.seen(message.senderId, message.data[DATA_WAKE_WORD]?.jsonPrimitive?.contentOrNull)
         //if (message.type != VacaBroadcastType.MASTER_HEARTBEAT) Timber.d("VacaUdpBroadcast: received ${message.type} from ${message.senderId}")
