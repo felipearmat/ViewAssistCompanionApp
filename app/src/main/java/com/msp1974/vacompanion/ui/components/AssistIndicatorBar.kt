@@ -89,6 +89,10 @@ fun AssistIndicatorBar() {
                     State.THINKING -> drawRect(THINKING_COLOR.copy(alpha = slow))
                     State.SPEAKING -> drawRect(SPEAKING_COLOR.copy(alpha = fast))
                     State.ERROR -> drawRect(ERROR_COLOR)
+                    // "Speak now" (HA's prompt, e.g. during calibration): a soft breathing cyan.
+                    State.PROMPT -> drawRect(LISTENING_COLOR.copy(alpha = 0.15f + 0.35f * slow))
+                    // "Got it": a short solid green.
+                    State.ACK -> drawRect(SPEAKING_COLOR)
                     State.IDLE -> Unit
                 }
             }

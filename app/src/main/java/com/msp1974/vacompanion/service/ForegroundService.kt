@@ -213,6 +213,13 @@ class VAForegroundService @Inject constructor() : LifecycleService(), EventListe
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        // As the home app the task is removed by the system itself (e.g. when the app is updated,
+        // the old task goes and the launcher opens a new one); stopping then left the satellite
+        // off the network until the app was reopened by hand. Only a non-home app stops here.
+        if (isHomeApp()) {
+            Timber.i("onTaskRemoved - home app, keeping the service running")
+            return
+        }
         Timber.i("onTaskRemoved - stopping service")
         stopSelf()
     }

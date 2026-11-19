@@ -981,6 +981,20 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                         p["count"]?.jsonPrimitive?.intOrNull ?: 10,
                     )
                 }
+                // HA drives the on-screen indicator outside interactions, e.g. during calibration:
+                // {"state": "prompt", "seconds": N} shows "speak now" until cleared or N s pass,
+                // {"state": "ack"} flashes "got it", {"state": "idle"} clears the prompt.
+                "indicator" -> if (config.assistIndicatorEnabled && payloadStr.isNotEmpty()) {
+                    val p = Json.parseToJsonElement(payloadStr).jsonObject
+                    when (p["state"]?.jsonPrimitive?.contentOrNull) {
+                        "prompt" -> AssistIndicator.prompt(p["seconds"]?.jsonPrimitive?.intOrNull ?: 60)
+                        "ack" -> AssistIndicator.set(AssistIndicator.State.ACK)
+                        "idle" -> {
+                            AssistIndicator.prompt(0)
+                            AssistIndicator.set(AssistIndicator.State.IDLE)
+                        }
+                    }
+                }
                 "capture_stop" -> {
                     val session = if (payloadStr.isNotEmpty())
                         Json.parseToJsonElement(payloadStr).jsonObject["session_id"]?.jsonPrimitive?.contentOrNull
