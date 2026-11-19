@@ -786,6 +786,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             put("music_playing", config.musicPlaying)
             put("audio_output", AudioOutputRouter.activeOutputId(context, config))
             level?.let { put("level", it) }
+            // Background noise before the detection: raw microphone, and as the engine got it.
+            microphone.level.floorDbfs()?.let { put("noise_floor_dbfs", it) }
+            microphone.processedLevel.floorDbfs()?.let { put("noise_floor_proc_dbfs", it) }
         }
 
     // A wake word that rose but stayed under the threshold: report it (score, music, output) so

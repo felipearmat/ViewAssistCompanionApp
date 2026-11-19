@@ -52,6 +52,24 @@ class MicLevelMonitor {
         return peak
     }
 
+    /**
+     * Background noise: the [percentile] (default 10th) of the frame levels over the last
+     * [windowMs], so speech and short sounds in the window barely move it. Null without audio.
+     */
+    @Synchronized
+    fun floorDbfs(windowMs: Long = NOISE_FLOOR_WINDOW_MS, percentile: Float = 0.1f): Float? {
+        if (frames.isEmpty()) return null
+        val levels = ArrayList<Float>()
+        var covered = 0f
+        for (i in frames.indices.reversed()) {
+            levels.add(frames[i].levelDb)
+            covered += frames[i].durationMs
+            if (covered >= windowMs) break
+        }
+        levels.sort()
+        return levels[((levels.size - 1) * percentile.coerceIn(0f, 1f)).toInt()]
+    }
+
     @Synchronized
     fun reset() {
         frames.clear()
@@ -64,6 +82,7 @@ class MicLevelMonitor {
          * the phrase itself plus the time the engine takes to report it.
          */
         const val WAKE_WORD_WINDOW_MS = 2000L
+        const val NOISE_FLOOR_WINDOW_MS = 3000L
 
         /** [rawDbfs] with this device's calibration [offsetDb] added; null if the level is unknown. */
         fun calibrated(rawDbfs: Float?, offsetDb: Float): Float? = rawDbfs?.plus(offsetDb)

@@ -44,6 +44,7 @@ class MicrophoneAudioStream(
 ) {
     /** How loud the microphone has been lately, measured on the raw signal before any processing. */
     val level = MicLevelMonitor()
+    val processedLevel = MicLevelMonitor()
 
     /** Turns the microphone right down while a sound the device plays itself (the wake sound) is heard. */
     val suppressor = MicSuppressor()
@@ -73,7 +74,8 @@ class MicrophoneAudioStream(
             return@channelFlow
         }
         level.reset()
-        val microphone = MicrophoneInput(context, deviceManager, suppressor, level)
+        processedLevel.reset()
+        val microphone = MicrophoneInput(context, deviceManager, suppressor, level, processedLevel)
         try {
             withContext(Dispatchers.IO) { microphone.start() }
             Timber.d("Microphone opened")

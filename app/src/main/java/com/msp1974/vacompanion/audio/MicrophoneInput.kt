@@ -24,6 +24,8 @@ class MicrophoneInput (
     private val suppressor: MicSuppressor = MicSuppressor(),
     // Fed every frame as it is read, before any processing, so the real loudness can be told.
     private val level: MicLevelMonitor? = null,
+    // Level of the processed audio (what the wake word engine gets), for the noise floor.
+    private val processedLevel: MicLevelMonitor? = null,
 ) : AutoCloseable {
 
     private val gate = MicGate()
@@ -160,12 +162,16 @@ class MicrophoneInput (
             if (applyEnhancement) {
                 // Too quiet to be speech: send silence, and leave WebRTC alone so its gain doesn't
                 // wind up on the noise.
-                if (!gate.isOpen(frame, config.micMinLevel)) return ShortArray(frame.size)
+                if (!gate.isOpen(frame, config.micMinLevel)) {
+                    return ShortArray(frame.size).also { processedLevel?.update(it, sampleRateInHz) }
+                }
                 // WebRTC levels the signal to a fixed output level; the mic gain setting then
                 // raises or lowers that, unless the microphone is being turned right down.
                 val micGainDb = config.micGain.toFloat().coerceIn(-MIC_GAIN_LIMIT_DB, MIC_GAIN_LIMIT_DB)
                 return suppressor.applyTo(webRtc?.process(frame) ?: frame, micGainDb)
+                    .also { processedLevel?.update(it, sampleRateInHz) }
             }
+            processedLevel?.update(frame, sampleRateInHz)
             return frame
         }
         return ShortArray(0)

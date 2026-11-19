@@ -425,7 +425,7 @@ class SendspinPlayer(
                 when (change) {
                     AudioManager.AUDIOFOCUS_GAIN -> {
                         hasAudioFocus = true
-                        if (!voiceHoldsFocus()) unduck()
+                        if (!voiceHoldsFocus() && !inConversation) unduck()
                     }
                     AudioManager.AUDIOFOCUS_LOSS,
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
@@ -465,7 +465,13 @@ class SendspinPlayer(
             }
             // The assistant finished speaking: no focus callback of our own fires if we started
             // ducked (see onStreamStart), so release the duck here.
-            "voicePlaybackEnded" -> mainHandler.post { if (!voiceHoldsFocus()) unduck() }
+            // In a conversation of this device the music stays down between turns (conversation
+            // ducking); it comes back when the pipeline completes.
+            "voicePlaybackEnded" -> mainHandler.post { if (!inConversation && !voiceHoldsFocus()) unduck() }
+            "audioPipelineCompleted" -> mainHandler.post {
+                inConversation = false
+                remoteUnduck.run()
+            }
             "duckingVolume" -> mainHandler.post { if (ducked) duck() }
             // The music player was asked to play: stop Sendspin so the two don't play over each other.
             "musicPlayerStarting" -> {
@@ -488,13 +494,19 @@ class SendspinPlayer(
             // focus, so the music doesn't drown the request. Released by the voice player's focus
             // handling, when another device answers instead, or by the failsafe.
             "localWakeWordDetected" -> mainHandler.post {
+                inConversation = true
+                mainHandler.removeCallbacks(conversationFailsafe)
+                mainHandler.postDelayed(conversationFailsafe, CONVERSATION_FAILSAFE_MS)
                 if (synchronized(nowPlayingLock) { streamActive || groupPlaying }) {
                     duck()
                     mainHandler.removeCallbacks(remoteUnduck)
                     mainHandler.postDelayed(remoteUnduck, REMOTE_DUCK_TIMEOUT_MS)
                 }
             }
-            "localWakeWordDismissed" -> mainHandler.post { remoteUnduck.run() }
+            "localWakeWordDismissed" -> mainHandler.post {
+                inConversation = false
+                remoteUnduck.run()
+            }
         }
     }
 
@@ -507,8 +519,16 @@ class SendspinPlayer(
     private val remoteUnduck: Runnable = object : Runnable {
         override fun run() {
             mainHandler.removeCallbacks(this)
-            if (ducked && !voiceHoldsFocus()) unduck()
+            if (ducked && !voiceHoldsFocus() && !inConversation) unduck()
         }
+    }
+
+    // A conversation of this device is under way (from its wake word to audioPipelineCompleted,
+    // which a continued conversation only sends at its end). Cleared by the failsafe too.
+    @Volatile private var inConversation = false
+    private val conversationFailsafe = Runnable {
+        inConversation = false
+        remoteUnduck.run()
     }
 
     companion object {
@@ -527,5 +547,6 @@ class SendspinPlayer(
         private const val UNDUCK_STEP = 0.1f
         private const val UNDUCK_INTERVAL_MS = 100L
         private const val REMOTE_DUCK_TIMEOUT_MS = 60_000L
+        private const val CONVERSATION_FAILSAFE_MS = 180_000L
     }
 }
