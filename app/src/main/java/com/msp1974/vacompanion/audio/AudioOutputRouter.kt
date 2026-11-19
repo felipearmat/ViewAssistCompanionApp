@@ -25,9 +25,28 @@ object AudioOutputRouter {
      * selected device when one is set and connected; on automatic it is whatever Android routes
      * media to (asked directly on Android 13+, otherwise worked out in Android's usual priority).
      */
+    /**
+     * The external output to use when output_auto_switch is on: Bluetooth, then USB, wired, line
+     * and HDMI. Null when only the device's own speaker is there.
+     */
+    fun externalOutput(outputs: Array<AudioDeviceInfo>): AudioDeviceInfo? {
+        val priority = listOf(
+            listOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_SPEAKER, AudioDeviceInfo.TYPE_BLE_HEADSET),
+            listOf(AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_ACCESSORY),
+            listOf(AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_LINE_ANALOG),
+            listOf(AudioDeviceInfo.TYPE_HDMI, AudioDeviceInfo.TYPE_HDMI_ARC, AudioDeviceInfo.TYPE_HDMI_EARC),
+        )
+        for (types in priority) {
+            outputs.firstOrNull { it.type in types && it.isSink }?.let { return it }
+        }
+        return null
+    }
+
     fun activeOutputId(context: Context, config: APPConfig): Int {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+
+        if (config.outputAutoSwitch) externalOutput(outputs)?.let { return it.id }
 
         val selected = config.audioOutputId
         if (selected >= 0 && outputs.any { it.id == selected }) return selected
@@ -51,10 +70,13 @@ object AudioOutputRouter {
     }
 
     fun resolvePreferredDevice(context: Context, config: APPConfig): AudioDeviceInfo? {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (config.outputAutoSwitch) {
+            externalOutput(audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS))?.let { return it }
+        }
         val id = config.audioOutputId
         if (id < 0) return null
 
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val device = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.id == id }
         if (device == null) {
             Timber.w("AudioOutputRouter: configured output id=$id not currently connected - falling back to automatic")

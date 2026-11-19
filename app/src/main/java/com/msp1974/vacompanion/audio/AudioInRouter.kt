@@ -1,5 +1,6 @@
 package com.msp1974.vacompanion.audio
 
+import android.media.MediaRecorder
 import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -248,6 +249,8 @@ class AudioInRouter(
         return when {
             device != null && isBluetoothMic(device) -> VACAAudioFormat.BLUETOOTH_AUDIO_SOURCE
             deviceManager.deviceInfo.software.isAndroidThings -> VACAAudioFormat.FALLBACK_AUDIO_SOURCE
+            // The phone's echo cancellation and voice processing, without call mode (mic_source).
+            deviceManager.config.micSource == "voice_communication" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
             else -> VACAAudioFormat.DEFAULT_AUDIO_SOURCE
         }
     }
@@ -273,6 +276,12 @@ class AudioInRouter(
             val forced = devices.firstOrNull { it.id == forcedId }
             if (forced != null) return forced
             Timber.w("Configured mic input id=$forcedId not currently connected - falling back to automatic selection")
+        }
+
+        // Unless auto switching is on, a satellite always listens with its own built-in microphone:
+        // a Bluetooth speaker's hands-free mic is far from the speaker and call quality (SCO).
+        if (!deviceManager.config.micAutoSwitch) {
+            return devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
         }
 
         return devices.firstOrNull { isUsbMic(it) }

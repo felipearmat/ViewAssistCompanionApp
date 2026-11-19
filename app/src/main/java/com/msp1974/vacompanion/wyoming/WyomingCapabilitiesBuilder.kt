@@ -52,4 +52,5 @@ val CASA_FEATURES = listOf(
     "thinking_sound", "thinking_intro_sound", "thinking_delay", "voice_gain", "echo_cancellation",
     "wake_word_clips", "wake_word_threshold_music", "local_end_of_speech", "assist_indicator",
     "wake_word_detection", "wake_word_near_miss", "ambient_capture", "level_offset_db",
+    "mic_source", "mic_auto_switch", "output_auto_switch",
 )

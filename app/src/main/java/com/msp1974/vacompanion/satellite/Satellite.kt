@@ -249,6 +249,10 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 }
                 // Connecting or removing a device can move the active input/output.
                 sendAudioSettingsIfChanged()
+                // Android keeps a volume per output: report the new output's, so HA shows (and
+                // doesn't overwrite) the volume this output was last left at.
+                delay(500.milliseconds)
+                reportOutputVolumes()
             }
         }
     }
@@ -278,6 +282,21 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = scheduleAudioDeviceCheck()
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = scheduleAudioDeviceCheck()
+    }
+
+    private fun reportOutputVolumes() {
+        val music = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val notification = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
+        if (music != config.musicVolume) {
+            Timber.i("Output volume: music $music (was ${config.musicVolume})")
+            config.musicVolume = music
+            sendSetting("music_volume", music)
+        }
+        if (notification != config.notificationVolume) {
+            Timber.i("Output volume: voice/notification $notification (was ${config.notificationVolume})")
+            config.notificationVolume = notification
+            sendSetting("notification_volume", notification)
+        }
     }
 
     private fun scheduleAudioDeviceCheck() {

@@ -246,6 +246,38 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Microphone source for the built-in mic: "voice_recognition" (default) or "voice_communication",
+    // which turns on the phone's own echo cancellation and voice processing without putting audio
+    // in call mode (playback keeps its quality). Applies when the microphone next opens.
+    var micSource: String
+        get() = this.sharedPrefs.getString("mic_source", "voice_recognition") ?: "voice_recognition"
+        set(value) {
+            val old = micSource
+            this.sharedPrefs.edit { putString("mic_source", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("micSource", old, value))
+        }
+
+    // Switch to a USB, Bluetooth or wired microphone when one connects. Off: the built-in microphone
+    // is always used unless audio_input selects another explicitly.
+    var micAutoSwitch: Boolean
+        get() = this.sharedPrefs.getBoolean("mic_auto_switch", false)
+        set(value) {
+            val old = micAutoSwitch
+            this.sharedPrefs.edit { putBoolean("mic_auto_switch", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("micAutoSwitch", old, value))
+        }
+
+    // Play through an external output (Bluetooth, USB, wired, HDMI) as soon as one connects, back
+    // to the built-in speaker when it goes, whatever audio_output selects. Android keeps a volume
+    // per output, so each comes back at the volume last used on it.
+    var outputAutoSwitch: Boolean
+        get() = this.sharedPrefs.getBoolean("output_auto_switch", true)
+        set(value) {
+            val old = outputAutoSwitch
+            this.sharedPrefs.edit { putBoolean("output_auto_switch", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("outputAutoSwitch", old, value))
+        }
+
     // Added to the level this device reports to the wake word arbiter (dB, -10..+10), on top of
     // the microphone calibration: Home Assistant tunes it to prefer a device. Stored on the device.
     var levelOffsetDb: Float
@@ -765,6 +797,9 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
         settings["level_offset_db"]?.jsonPrimitive?.floatOrNull?.let { levelOffsetDb = it }
+        settings["mic_source"]?.jsonPrimitive?.contentOrNull?.let { micSource = it }
+        settings["mic_auto_switch"]?.jsonPrimitive?.booleanOrNull?.let { micAutoSwitch = it }
+        settings["output_auto_switch"]?.jsonPrimitive?.booleanOrNull?.let { outputAutoSwitch = it }
         // Same scale as wake_word_threshold (1-10 from HA, stored as 0-1); 0 turns it off.
         settings["wake_word_threshold_music"]?.jsonPrimitive?.floatOrNull?.let { wakeWordThresholdMusic = (it / 10).round(2) }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }
