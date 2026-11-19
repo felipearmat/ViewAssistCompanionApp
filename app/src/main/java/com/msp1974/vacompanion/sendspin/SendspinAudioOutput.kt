@@ -192,23 +192,16 @@ class SendspinAudioOutput {
             atUs = System.nanoTime() / 1000
         }
         // Bluetooth (A2DP) reports the presented position in bursts, ~90 ms apart on a Samsung
-        // A20, which made the library lose and regain sync ten times a second (audible stutter).
-        // Each reading gives the moment frame 0 was presented; that start time is smoothed, and
-        // the position reported is where a steady clock from it says playback is now.
+        // A20, which made the library lose and regain sync (audible stutter). A straight line is
+        // fitted to the readings of the last few seconds (position against time): it smooths the
+        // bursts and follows the real playback rate, which differs a little from the nominal one.
+        // The position reported is where that line puts playback now.
         val nowUs = System.nanoTime() / 1000
-        val startUs = atUs - presented * 1_000_000L / sampleRate
-        val smoothed = smoothedStartUs
-        smoothedStartUs = if (smoothed == null || kotlin.math.abs(startUs - smoothed) > START_JUMP_US) {
-            startUs.toDouble()
-        } else {
-            smoothed + (startUs - smoothed) * START_SMOOTHING
-        }
+        addReading(atUs, presented)
+        val fitted = fittedPosition(nowUs) ?: presented
         // Never further than a burst ahead of what the track reported, so a real stall (underrun)
         // still shows.
-        val estimated = minOf(
-            ((nowUs - smoothedStartUs!!) * sampleRate / 1_000_000.0).toLong(),
-            presented + sampleRate * MAX_LEAD_MS / 1000,
-        )
+        val estimated = minOf(fitted, presented + sampleRate * MAX_LEAD_MS / 1000)
         val delta = estimated - lastPresented
         if (delta <= 0) return null
         lastPresented = estimated
@@ -216,8 +209,40 @@ class SendspinAudioOutput {
         Played(delta, nowUs)
     }
 
-    // Smoothed moment (µs, CLOCK_MONOTONIC) frame 0 of the stream was presented; see pollPlayed.
-    private var smoothedStartUs: Double? = null
+    // Distinct (time µs, presented frames) readings of the last FIT_WINDOW_US, for fittedPosition.
+    private val readings = ArrayDeque<LongArray>()
+
+    private fun addReading(atUs: Long, frames: Long) {
+        val last = readings.lastOrNull()
+        if (last != null && last[0] == atUs && last[1] == frames) return
+        // A jump far off the line (flush, route change): start over.
+        val predicted = fittedPosition(atUs)
+        if (predicted != null && kotlin.math.abs(predicted - frames) > sampleRate * JUMP_MS / 1000) readings.clear()
+        readings.addLast(longArrayOf(atUs, frames))
+        while (readings.size > 2 && atUs - readings.first()[0] > FIT_WINDOW_US) readings.removeFirst()
+    }
+
+    /** Least-squares line through the readings, evaluated at [atUs]; null with too few. */
+    private fun fittedPosition(atUs: Long): Long? {
+        if (readings.size < MIN_FIT_READINGS) return null
+        val t0 = readings.first()[0]
+        val f0 = readings.first()[1]
+        var sx = 0.0; var sy = 0.0; var sxx = 0.0; var sxy = 0.0
+        for (r in readings) {
+            val x = (r[0] - t0).toDouble()
+            val y = (r[1] - f0).toDouble()
+            sx += x; sy += y; sxx += x * x; sxy += x * y
+        }
+        val n = readings.size.toDouble()
+        val den = n * sxx - sx * sx
+        if (den <= 0.0) return null
+        val slope = (n * sxy - sx * sy) / den
+        // A rate far from nominal means bad readings: don't trust the line.
+        val nominal = sampleRate / 1_000_000.0
+        if (slope < nominal * 0.9 || slope > nominal * 1.1) return null
+        val intercept = (sy - slope * sx) / n
+        return f0 + (intercept + slope * (atUs - t0)).toLong()
+    }
 
     fun setGain(value: Float) {
         gain = value.coerceIn(0f, 1f)
@@ -253,7 +278,7 @@ class SendspinAudioOutput {
     }
 
     private fun resetProgress() {
-        smoothedStartUs = null
+        readings.clear()
         EchoReference.reset()
         lastPresented = 0
         headFrames = 0
@@ -287,9 +312,10 @@ class SendspinAudioOutput {
 
     companion object {
         private const val BUFFER_FLOOR_MS = 250
-        // Weight of each new reading in the smoothed start time, and the jump that resets it.
-        private const val START_SMOOTHING = 0.02
-        private const val START_JUMP_US = 400_000L
+        // Readings the playback line is fitted over, how many it needs, and the jump that resets it.
+        private const val FIT_WINDOW_US = 3_000_000L
+        private const val MIN_FIT_READINGS = 8
+        private const val JUMP_MS = 400L
         private const val MAX_LEAD_MS = 150L
         private const val IDLE_WAIT_MS = 10
         private const val MAX_WRITE_WAIT_MS = 2000

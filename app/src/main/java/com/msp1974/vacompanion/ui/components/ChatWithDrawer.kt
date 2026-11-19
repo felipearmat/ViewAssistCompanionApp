@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -77,7 +78,8 @@ fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: 
             }
         }
 
-        WebView(chat, modifier = Modifier.fillMaxSize())
+        // Room at the bottom so the end of the chat isn't hidden under the drawer's handle.
+        WebView(chat, modifier = Modifier.fillMaxSize().padding(bottom = HANDLE_HEIGHT))
 
         Column(
             modifier = Modifier
