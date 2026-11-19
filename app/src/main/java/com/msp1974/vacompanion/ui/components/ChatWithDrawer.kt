@@ -8,14 +8,19 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -36,13 +41,21 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-private val HANDLE_HEIGHT = 28.dp
+/** Width of the handle column; the chat keeps this much room on its right (CHAT_RIGHT_ROOM). */
+private val HANDLE_WIDTH = 28.dp
+// Gap between the folded handle and the screen edge, away from the edge-swipe "back" gesture.
+private val EDGE_GAP = 8.dp
+private val HANDLE_HEIGHT = 120.dp
+/** Room the chat keeps on its right for the folded handle: 36 dp. */
+val CHAT_RIGHT_ROOM = HANDLE_WIDTH + EDGE_GAP
 
 /**
- * The assistant's chat (chat_path) fills the screen; Home Assistant sits in a drawer folded down
- * to a handle at the bottom. Dragging the handle up opens it; dragging it down, [timeoutS]
- * seconds without a touch on it, or the screen going off (this leaves composition) folds it
- * again. The Home Assistant page stays loaded underneath, so it reopens where it was left.
+ * The assistant's chat (chat_path) fills the screen; Home Assistant sits in a side drawer folded
+ * to a handle on the right edge, always visible. Dragging the handle left opens it (the handle
+ * then rides on the drawer's left edge); dragging it right, [timeoutS] seconds without a touch on
+ * Home Assistant, or the screen going off (this leaves composition) folds it again. The handle
+ * is excluded from the system's edge gestures, and the page stays loaded so it reopens where it
+ * was left.
  */
 @Composable
 fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: Int) {
@@ -60,8 +73,8 @@ fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: 
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val fullPx = with(density) { maxHeight.toPx() }
-        val closedPx = fullPx - with(density) { HANDLE_HEIGHT.toPx() }
+        val widthPx = with(density) { maxWidth.toPx() }
+        val closedPx = widthPx - with(density) { (HANDLE_WIDTH + EDGE_GAP).toPx() }
         val offset = remember(closedPx) { Animatable(closedPx) }
         val isOpen = offset.value < closedPx / 2
 
@@ -78,38 +91,46 @@ fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: 
             }
         }
 
-        // Room at the bottom so the end of the chat isn't hidden under the drawer's handle.
-        WebView(chat, modifier = Modifier.fillMaxSize().padding(bottom = HANDLE_HEIGHT))
+        // Room on the right so the chat isn't covered by the folded handle.
+        WebView(chat, modifier = Modifier.fillMaxSize().padding(end = CHAT_RIGHT_ROOM))
 
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
-                .offset { IntOffset(0, offset.value.roundToInt()) }
+                .offset { IntOffset(offset.value.roundToInt(), 0) }
         ) {
-            // The handle: drag up to open, down to close.
+            // Handle column: only the pill takes touches, the rest shows the chat beneath.
+            // The column is the handle plus the edge gap, so when folded the pill sits a little in
+            // from the screen edge and none of Home Assistant shows past it.
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(HANDLE_HEIGHT)
-                    .background(Color(0xCC202124), RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-                    .draggable(
-                        orientation = Orientation.Vertical,
-                        state = rememberDraggableState { delta ->
-                            scope.launch { offset.snapTo((offset.value + delta).coerceIn(0f, closedPx)) }
-                        },
-                        onDragStopped = { velocity ->
-                            val open = velocity < -800f || (velocity <= 800f && offset.value < closedPx * 0.6f)
-                            settle(open)
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
+                modifier = Modifier.width(HANDLE_WIDTH + EDGE_GAP).fillMaxHeight(),
+                contentAlignment = Alignment.CenterStart,
             ) {
                 Box(
                     modifier = Modifier
-                        .width(48.dp)
-                        .height(5.dp)
-                        .background(Color(0x99FFFFFF), RoundedCornerShape(3.dp))
-                )
+                        .width(HANDLE_WIDTH)
+                        .height(HANDLE_HEIGHT)
+                        .systemGestureExclusion()
+                        .background(Color(0xCC202124), RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
+                        .draggable(
+                            orientation = Orientation.Horizontal,
+                            state = rememberDraggableState { delta ->
+                                scope.launch { offset.snapTo((offset.value + delta).coerceIn(0f, closedPx)) }
+                            },
+                            onDragStopped = { velocity ->
+                                val open = velocity < -800f || (velocity <= 800f && offset.value < closedPx * 0.6f)
+                                settle(open)
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // Points the way the handle can go: left to open, right to close.
+                    Icon(
+                        imageVector = if (isOpen) Icons.Default.ChevronRight else Icons.Default.ChevronLeft,
+                        contentDescription = if (isOpen) "Close Home Assistant" else "Open Home Assistant",
+                        tint = Color(0xDDFFFFFF),
+                    )
+                }
             }
             WebView(homeAssistant, modifier = Modifier.fillMaxSize())
         }
