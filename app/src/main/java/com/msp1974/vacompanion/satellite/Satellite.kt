@@ -121,6 +121,21 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     // subscribe to it; it is open only while at least one of them is.
     private val microphone = MicrophoneAudioStream(context, deviceManager, scope)
 
+    // Room recording for wake word training, started by HA (capture_ambient / capture_stop).
+    private val ambientCapture by lazy {
+        AmbientCapture(
+            scope, microphone.audio, config.sampleRate,
+            beep = { playWakeWordDetectionSound() },
+            info = {
+                buildJsonObject {
+                    put("music_playing", config.musicPlaying)
+                    put("audio_output", AudioOutputRouter.activeOutputId(context, config))
+                }
+            },
+            send = { data, wav -> sendCustomEvent("ambient_chunk", data, wav) },
+        )
+    }
+
     // Audio around each wake word detection, sent to HA with its outcome (wake_word_clips).
     private val wakeClips = WakeClipRecorder(scope, config.sampleRate) { meta, wav ->
         sendCustomEvent(WAKE_WORD_CLIP_EVENT_TYPE, meta, wav)
@@ -372,6 +387,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         audioDeviceHandler.removeCallbacks(audioDevicesChanged)
 
         stopAudioPipeline()
+        ambientCapture.stop()
         wakeClips.clear()
         indicate(AssistIndicator.State.IDLE)
 
@@ -549,7 +565,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     private suspend fun interruptResponse(detection: WakeWordEngineProvider.WakeWordDetection) {
         Timber.i("Wake word heard while responding, interrupting")
         val level = MicLevelMonitor.calibrated(
-            microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb
+            microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb + config.levelOffsetDb
         )
         VacaUdpBroadcast.instance?.reportInterruption(detection.score, level)
         cancelDetectionBuffer()
@@ -569,6 +585,22 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         }
         soundEffectFinishTime = 0L
 
+        // Recording the room for training: a wake word heard now is a confirmed false one. It is
+        // noted in the recording and reported, but starts nothing and plays no sound.
+        if (ambientCapture.active && detection.wakeWordId != "manual_wake") {
+            ambientCapture.onDetection(detection.score)
+            runCatching {
+                sendStatus(buildJsonObject {
+                    put("wake_word_detection", buildJsonObject {
+                        detectionJson(detection, null).forEach { (k, v) -> put(k, v) }
+                        put("answered", false)
+                        put("capture_session", ambientCapture.sessionId.orEmpty())
+                    })
+                })
+            }
+            return
+        }
+
         // A spoken wake word never gets here while responding (it interrupts instead, see
         // onWakeWordDetected); a manual wake is simply ignored.
         if (isResponding()) return
@@ -580,7 +612,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         try {
             // Measured before the sound plays, so the device's own chime can't count towards it.
             val level = MicLevelMonitor.calibrated(
-                microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb
+                microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb + config.levelOffsetDb
             )
 
             // Every device that heard the wake word reacts at once: the sound tells the user it was
@@ -741,7 +773,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     // HA can tune the thresholds, and keep its audio as a "near_miss" clip for retraining.
     private fun handleNearMiss(detection: WakeWordEngineProvider.WakeWordDetection) {
         val level = MicLevelMonitor.calibrated(
-            microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb
+            microphone.level.peakDbfs(MicLevelMonitor.WAKE_WORD_WINDOW_MS), config.wakeLevelOffsetDb + config.levelOffsetDb
         )
         Timber.i("Wake word near miss: ${detection.wakeWord} peaked at ${detection.score}, threshold ${config.effectiveWakeWordThreshold}${if (config.musicPlaying) " (music playing)" else ""}")
         val data = detectionJson(detection, level)
@@ -917,6 +949,22 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     BroadcastSender.sendBroadcast(context, BroadcastSender.STOP_WORD_DETECTED)
                 }
                 "refresh" -> config.eventBroadcaster.notifyEvent(Event("refresh", "", ""))
+                "capture_ambient" -> if (payloadStr.isNotEmpty()) {
+                    val p = Json.parseToJsonElement(payloadStr).jsonObject
+                    val session = p["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    if (session.isNotEmpty()) ambientCapture.start(
+                        session,
+                        p["minutes"]?.jsonPrimitive?.intOrNull ?: 10,
+                        p["mode"]?.jsonPrimitive?.contentOrNull ?: "ambient",
+                        p["count"]?.jsonPrimitive?.intOrNull ?: 10,
+                    )
+                }
+                "capture_stop" -> {
+                    val session = if (payloadStr.isNotEmpty())
+                        Json.parseToJsonElement(payloadStr).jsonObject["session_id"]?.jsonPrimitive?.contentOrNull
+                    else null
+                    if (session.isNullOrEmpty() || session == ambientCapture.sessionId) ambientCapture.stop()
+                }
                 "get-logs" -> scope.launch { handleGetLogs(payloadStr) }
                 "wake" -> scope.launch {
                     handleWakeWordDetection(WakeWordEngineProvider.WakeWordDetection(

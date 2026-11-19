@@ -246,6 +246,16 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("suppressWakeSound", old, value))
         }
 
+    // Added to the level this device reports to the wake word arbiter (dB, -10..+10), on top of
+    // the microphone calibration: Home Assistant tunes it to prefer a device. Stored on the device.
+    var levelOffsetDb: Float
+        get() = this.sharedPrefs.getFloat("level_offset_db", 0f).coerceIn(-10f, 10f)
+        set(value) {
+            val old = levelOffsetDb
+            this.sharedPrefs.edit { putFloat("level_offset_db", value.coerceIn(-10f, 10f)) }
+            if (old != levelOffsetDb) eventBroadcaster.notifyEvent(Event("levelOffsetDb", old, levelOffsetDb))
+        }
+
     // Wake word arbitration master priority (0-10): the device with the highest runs the arbitration
     // (lowest id on a tie). Give it to the device with the steadiest Wi-Fi. Stored on the device; HA
     // can push it.
@@ -754,6 +764,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["local_end_of_speech"]?.jsonPrimitive?.booleanOrNull?.let { localEndOfSpeech = it }
         settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
+        settings["level_offset_db"]?.jsonPrimitive?.floatOrNull?.let { levelOffsetDb = it }
         // Same scale as wake_word_threshold (1-10 from HA, stored as 0-1); 0 turns it off.
         settings["wake_word_threshold_music"]?.jsonPrimitive?.floatOrNull?.let { wakeWordThresholdMusic = (it / 10).round(2) }
         settings["mic_min_level"]?.jsonPrimitive?.intOrNull?.let { micMinLevel = it }

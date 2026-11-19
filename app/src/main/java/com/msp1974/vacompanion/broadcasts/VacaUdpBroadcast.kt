@@ -508,7 +508,8 @@ class VacaUdpBroadcast(
                     send(VacaBroadcastType.MASTER_HEARTBEAT, masterData())
                     lastHeartbeat = now
                 }
-            } else if (masterId != null && config.masterPriority > masterPriority) {
+            } else if (masterId != null && (config.masterPriority > masterPriority ||
+                    (config.masterPriority == masterPriority && config.uuid < masterId!!))) {
                 // A higher priority device takes over from the current master.
                 Timber.i("VacaUdpBroadcast: priority ${config.masterPriority} > master $masterId's $masterPriority, claiming")
                 masterId = config.uuid
