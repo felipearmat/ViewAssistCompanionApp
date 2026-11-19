@@ -2,6 +2,7 @@
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import android.net.NetworkCapabilities
 import com.msp1974.vacompanion.device.DeviceManager
 import com.msp1974.vacompanion.utils.Event
@@ -127,6 +128,25 @@ class VacaUdpBroadcast(
     private val handlers = ConcurrentHashMap<String, CopyOnWriteArrayList<(VacaBroadcastMessage) -> Unit>>()
 
     @Volatile private var receiveSocket: DatagramSocket? = null
+
+    // Without a multicast lock many phones (seen on a Samsung A20) drop incoming broadcasts in the
+    // Wi-Fi chip, more so with the screen off: the device then never hears the others' claims,
+    // detections or decisions and arbitrates alone. Held while listening; costs a little battery.
+    private var multicastLock: WifiManager.MulticastLock? = null
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wifi.createMulticastLock("vaca-udp-broadcast").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            Timber.i("VacaUdpBroadcast: multicast lock held")
+        } catch (e: Exception) {
+            Timber.w("VacaUdpBroadcast: multicast lock unavailable: ${e.message}")
+        }
+    }
     @Volatile private var sendSocket: DatagramSocket? = null
 
     companion object {
@@ -512,6 +532,8 @@ class VacaUdpBroadcast(
     }
 
     fun shutdown() {
+        runCatching { multicastLock?.takeIf { it.isHeld }?.release() }
+        multicastLock = null
         instance = null
         config.eventBroadcaster.removeListener(this)
         handlers.clear()
@@ -571,6 +593,7 @@ class VacaUdpBroadcast(
                     bind(InetSocketAddress(PORT))
                 }
                 receiveSocket = socket
+                acquireMulticastLock()
                 Timber.i("VacaUdpBroadcast: listening on UDP $PORT")
                 send(VacaBroadcastType.DEVICE_HELLO)
                 sendPresence()
