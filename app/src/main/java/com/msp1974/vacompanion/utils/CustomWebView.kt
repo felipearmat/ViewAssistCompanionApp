@@ -235,6 +235,9 @@ class CustomWebView @JvmOverloads constructor(
     }
 
     @SuppressLint("ClickableViewAccessibility")
+    /** Called on every touch on the page (e.g. to keep the Home Assistant drawer open). */
+    var onUserInteraction: (() -> Unit)? = null
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val gestureHandled = gestureDetector.onTouchEvent(event, height)
         if (requestDisallow) {
@@ -246,6 +249,7 @@ class CustomWebView @JvmOverloads constructor(
 
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             gestureCancelSent = false
+            onUserInteraction?.invoke()
         }
 
         // Once a native gesture (L-gesture / 2-finger bottom swipe) has been recognised, stop

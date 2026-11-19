@@ -32,6 +32,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.msp1974.vacompanion.settings.PageLoadingStage
 import com.msp1974.vacompanion.ui.VAViewModel
+import com.msp1974.vacompanion.ui.components.ChatWithDrawer
 import com.msp1974.vacompanion.ui.components.DiagnosticBar
 import com.msp1974.vacompanion.ui.components.IconStatusBlock
 import com.msp1974.vacompanion.ui.components.NowPlayingOverlay
@@ -42,7 +43,13 @@ import com.msp1974.vacompanion.utils.WebViewGestureDetector
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WebViewScreen (webView: CustomWebView, vaViewModel: VAViewModel = viewModel()) {
+fun WebViewScreen (
+    webView: CustomWebView,
+    vaViewModel: VAViewModel = viewModel(),
+    // The assistant's chat as the main screen, with Home Assistant in a drawer (chat_path).
+    chatWebView: CustomWebView? = null,
+    drawerTimeoutS: Int = 120,
+) {
     val vaUiState by vaViewModel.vacaState.collectAsState()
     var showBottomSheet by remember { mutableStateOf(false) }
     var showServerDisconnectedDialog by remember { mutableStateOf(false) }
@@ -95,7 +102,11 @@ fun WebViewScreen (webView: CustomWebView, vaViewModel: VAViewModel = viewModel(
         }
 
         Box(modifier = modifier) {
-            WebView(webView)
+            if (chatWebView != null) {
+                ChatWithDrawer(chatWebView, webView, drawerTimeoutS)
+            } else {
+                WebView(webView)
+            }
         }
 
         //TODO: Re-enable when have method for detecting full page render finished

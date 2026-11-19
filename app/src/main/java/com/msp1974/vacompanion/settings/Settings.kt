@@ -299,6 +299,25 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != masterPriority) eventBroadcaster.notifyEvent(Event("masterPriority", old, masterPriority))
         }
 
+    // The assistant's chat as the main screen (path on Home Assistant, e.g.
+    // "jarvis-chat?sat=vaca_sma205g"), with the dashboard in a drawer; blank = dashboard only.
+    var chatPath: String
+        get() = this.sharedPrefs.getString("chat_path", "") ?: ""
+        set(value) {
+            val old = chatPath
+            this.sharedPrefs.edit { putString("chat_path", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("chatPath", old, value))
+        }
+
+    // Seconds without a touch before the Home Assistant drawer folds back (0 = never).
+    var drawerTimeout: Int
+        get() = this.sharedPrefs.getInt("drawer_timeout", 120).coerceIn(0, 3600)
+        set(value) {
+            val old = drawerTimeout
+            this.sharedPrefs.edit { putInt("drawer_timeout", value.coerceIn(0, 3600)) }
+            if (old != drawerTimeout) eventBroadcaster.notifyEvent(Event("drawerTimeout", old, drawerTimeout))
+        }
+
     // Show what the assistant is doing (listening, thinking, speaking) as a bar along the bottom
     // of the screen; nothing while idle. Off by default. Stored on the device; HA can push it.
     var assistIndicatorEnabled: Boolean
@@ -796,6 +815,8 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["local_end_of_speech"]?.jsonPrimitive?.booleanOrNull?.let { localEndOfSpeech = it }
         settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
+        settings["chat_path"]?.jsonPrimitive?.contentOrNull?.let { chatPath = it.trim().removePrefix("/") }
+        settings["drawer_timeout"]?.jsonPrimitive?.floatOrNull?.let { drawerTimeout = it.toInt() }
         settings["level_offset_db"]?.jsonPrimitive?.floatOrNull?.let { levelOffsetDb = it }
         settings["mic_source"]?.jsonPrimitive?.contentOrNull?.let { micSource = it }
         settings["mic_auto_switch"]?.jsonPrimitive?.booleanOrNull?.let { micAutoSwitch = it }

@@ -42,6 +42,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.net.toUri
@@ -98,6 +100,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     private var firebaseManager: FirebaseManager? = null
 
     private lateinit var webView: CustomWebView
+    // The assistant's chat (chat_path), shown with Home Assistant in a drawer; null when off.
+    private var chatWebView by mutableStateOf<CustomWebView?>(null)
     private lateinit var webViewClient: CustomWebViewClient
 
     private lateinit var screen: ScreenUtils
@@ -183,7 +187,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                             vaUiState.screenBlank -> BlackScreen()
                             vaUiState.satelliteRunning -> {
                                 Box(modifier = Modifier.fillMaxSize()) {
-                                    WebViewScreen(webView)
+                                    WebViewScreen(webView, chatWebView = chatWebView, drawerTimeoutS = config.drawerTimeout)
                                     if (vaUiState.showMenu) {
                                         SettingsLayout(
                                             viewModel = viewModel,
@@ -335,6 +339,25 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         screen.hideSystemUI(window, !config.showStatusBar)
     }
 
+    /** Creates (or drops) the chat WebView for chat_path and loads it, authenticated like the dashboard. */
+    private fun loadChat() {
+        val path = config.chatPath
+        if (path.isBlank()) {
+            chatWebView?.destroy()
+            chatWebView = null
+            return
+        }
+        val chat = chatWebView ?: CustomWebView.getView(this).also {
+            it.initialise(deviceManager, CustomWebViewClient(viewModel))
+            it.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val base = deviceManager.authenticationManager.getBaseUrl().toString().removeSuffix("/")
+        val url = "$base/$path" + (if (path.contains('?')) "&" else "?") + "external_auth=1"
+        Timber.d("Loading chat: $url")
+        chat.loadUrl(url)
+        chatWebView = chat
+    }
+
     fun initWebView() {
         webViewClient = CustomWebViewClient(viewModel)
         webView = CustomWebView.getView(this)
@@ -434,6 +457,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     val url = deviceManager.authenticationManager.getHAUrl()
                     Timber.d("Satellite started -> loading URL: $url")
                     webView.loadUrl(url)
+                    loadChat()
                 }
                 BroadcastSender.SATELLITE_CLIENT_UPDATED -> {
                     val webviewState = viewModel.vacaState.value.webViewPageLoadingStage
@@ -667,6 +691,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     override fun onEventTriggered(event: Event) {
         var consumed = true
         runOnUiThread {
+            if (event.eventName == "chatPath") loadChat()
             if (!screenOffInProgress) {
                 when (event.eventName) {
                     "screenAlwaysOn" -> {
