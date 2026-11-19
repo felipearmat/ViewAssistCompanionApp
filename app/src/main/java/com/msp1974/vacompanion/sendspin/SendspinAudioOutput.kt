@@ -191,12 +191,33 @@ class SendspinAudioOutput {
             presented = headFrames
             atUs = System.nanoTime() / 1000
         }
-        val delta = presented - lastPresented
+        // Bluetooth (A2DP) reports the presented position in bursts, ~90 ms apart on a Samsung
+        // A20, which made the library lose and regain sync ten times a second (audible stutter).
+        // Each reading gives the moment frame 0 was presented; that start time is smoothed, and
+        // the position reported is where a steady clock from it says playback is now.
+        val nowUs = System.nanoTime() / 1000
+        val startUs = atUs - presented * 1_000_000L / sampleRate
+        val smoothed = smoothedStartUs
+        smoothedStartUs = if (smoothed == null || kotlin.math.abs(startUs - smoothed) > START_JUMP_US) {
+            startUs.toDouble()
+        } else {
+            smoothed + (startUs - smoothed) * START_SMOOTHING
+        }
+        // Never further than a burst ahead of what the track reported, so a real stall (underrun)
+        // still shows.
+        val estimated = minOf(
+            ((nowUs - smoothedStartUs!!) * sampleRate / 1_000_000.0).toLong(),
+            presented + sampleRate * MAX_LEAD_MS / 1000,
+        )
+        val delta = estimated - lastPresented
         if (delta <= 0) return null
-        lastPresented = presented
+        lastPresented = estimated
         EchoReference.release(delta)
-        Played(delta, atUs)
+        Played(delta, nowUs)
     }
+
+    // Smoothed moment (µs, CLOCK_MONOTONIC) frame 0 of the stream was presented; see pollPlayed.
+    private var smoothedStartUs: Double? = null
 
     fun setGain(value: Float) {
         gain = value.coerceIn(0f, 1f)
@@ -232,6 +253,7 @@ class SendspinAudioOutput {
     }
 
     private fun resetProgress() {
+        smoothedStartUs = null
         EchoReference.reset()
         lastPresented = 0
         headFrames = 0
@@ -265,6 +287,10 @@ class SendspinAudioOutput {
 
     companion object {
         private const val BUFFER_FLOOR_MS = 250
+        // Weight of each new reading in the smoothed start time, and the jump that resets it.
+        private const val START_SMOOTHING = 0.02
+        private const val START_JUMP_US = 400_000L
+        private const val MAX_LEAD_MS = 150L
         private const val IDLE_WAIT_MS = 10
         private const val MAX_WRITE_WAIT_MS = 2000
         private const val WRITE_RETRY_MS = 3L
