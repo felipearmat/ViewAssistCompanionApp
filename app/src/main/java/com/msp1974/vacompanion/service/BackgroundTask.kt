@@ -1,5 +1,6 @@
 package com.msp1974.vacompanion.service
 
+import kotlinx.coroutines.delay
 import android.content.Context
 import com.msp1974.vacompanion.broadcasts.VacaUdpBroadcast
 import com.msp1974.vacompanion.btproxy.BluetoothProxyManager
@@ -48,7 +49,18 @@ internal class BackgroundTaskController (private val context: Context, val devic
                     ServerState.STOPPED -> {
                         Timber.d("Wyoming server stopped. Restart: $restartIfStopped")
                         // Restart server
-                        if (restartIfStopped) runServer()
+                        if (restartIfStopped) {
+                            runServer()
+                        } else if (!shuttingDown) {
+                            // Stopped while the app keeps running (seen right after every app
+                            // update on two phones: the satellite stayed off the network until
+                            // the app was reopened by hand). Bring it back.
+                            Timber.w("Wyoming server stopped unexpectedly, restarting in ${UNEXPECTED_STOP_RESTART_MS / 1000} s")
+                            scope.launch {
+                                delay(UNEXPECTED_STOP_RESTART_MS)
+                                if (!shuttingDown) runServer()
+                            }
+                        }
                     }
                     ServerState.ERRORED -> {
                         restartOnError()
@@ -90,12 +102,19 @@ internal class BackgroundTaskController (private val context: Context, val devic
         // TODO: Add restart watchdog
     }
 
+    @Volatile private var shuttingDown = false
+
     fun shutdown() {
+        shuttingDown = true
         Timber.i("Shutting down")
         server?.stopServer()
         rtspServerManager.shutdown()
         sendspinManager.shutdown()
         bluetoothProxyManager.shutdown()
         vacaUdpBroadcast.shutdown()
+    }
+
+    companion object {
+        private const val UNEXPECTED_STOP_RESTART_MS = 2_000L
     }
 }

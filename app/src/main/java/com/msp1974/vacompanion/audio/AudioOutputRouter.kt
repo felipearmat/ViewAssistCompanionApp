@@ -49,7 +49,13 @@ object AudioOutputRouter {
         if (config.outputAutoSwitch) externalOutput(outputs)?.let { return it.id }
 
         val selected = config.audioOutputId
-        if (selected >= 0 && outputs.any { it.id == selected }) return selected
+        val selectedDevice = outputs.firstOrNull { it.id == selected }
+        if (selectedDevice != null) {
+            if (selectedDevice.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+                outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let { return it.id }
+            }
+            return selected
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build()
@@ -77,9 +83,16 @@ object AudioOutputRouter {
         val id = config.audioOutputId
         if (id < 0) return null
 
-        val device = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.id == id }
+        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val device = outputs.firstOrNull { it.id == id }
         if (device == null) {
             Timber.w("AudioOutputRouter: configured output id=$id not currently connected - falling back to automatic")
+        }
+        // A satellite is never listened to with the phone at the ear: the earpiece is nearly
+        // inaudible across a room, so the built-in speaker is used instead.
+        if (device?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+            Timber.w("AudioOutputRouter: earpiece selected, using the built-in speaker")
+            return outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER } ?: device
         }
         return device
     }
