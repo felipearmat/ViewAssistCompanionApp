@@ -1229,7 +1229,46 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         }
     }
 
+    // Every ~10 s of idle, the room's background noise (ambient_noise), so HA can follow it.
+    // A window with listening, thinking, speaking or a room capture in it is skipped.
+    private var ambientNoiseJob: Job? = null
+
+    private fun startAmbientNoise() {
+        ambientNoiseJob?.cancel()
+        ambientNoiseJob = scope.launch {
+            var idleS = 0
+            var own = false
+            while (true) {
+                delay(1_000)
+                val idle = clientId.isNotEmpty() && audioPipeline == null && !arbitratingWakeWord &&
+                    !ambientCapture.active
+                if (!idle) { idleS = 0; own = false; continue }
+                idleS++
+                own = own || config.musicPlaying || mediaManager.voicePlayer.isPlaying() ||
+                    mediaManager.alarmPlayer.isSounding() || System.currentTimeMillis() < soundEffectFinishTime
+                if (idleS * 1000L < MicLevelMonitor.AMBIENT_WINDOW_MS) continue
+                val raw = microphone.level.medianDbfs(MicLevelMonitor.AMBIENT_WINDOW_MS)
+                val proc = microphone.processedLevel.medianDbfs(MicLevelMonitor.AMBIENT_WINDOW_MS)
+                if (raw != null) {
+                    runCatching {
+                        sendStatus(buildJsonObject {
+                            putJsonObject("ambient_noise") {
+                                put("dbfs", Math.round(raw * 10) / 10f)
+                                proc?.let { put("proc_dbfs", Math.round(it * 10) / 10f) }
+                                put("music_playing", config.musicPlaying)
+                                put("own_playback", own)
+                            }
+                        })
+                    }.onFailure { Timber.w(it, "Unable to send ambient noise") }
+                }
+                idleS = 0
+                own = false
+            }
+        }
+    }
+
     suspend fun startSensorMonitor() {
+        startAmbientNoise()
         sensorJob = scope.launch {
             deviceManager.sensors.collect { data ->
                 val data = buildJsonObject {
@@ -1290,6 +1329,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     suspend fun stopSensors() {
         sensorJob?.cancel()
+        ambientNoiseJob?.cancel()
         stopMotionDetection()
     }
 

@@ -17,6 +17,7 @@ class MicLevelMonitor {
 
     private val frames = ArrayDeque<Frame>()
     private var framesMs = 0f
+    private var lastUpdate = 0L
 
     @Synchronized
     fun update(frame: ShortArray, sampleRate: Int = VACAAudioFormat.SAMPLE_RATE_HZ) {
@@ -29,6 +30,7 @@ class MicLevelMonitor {
         val levelDb = (10 * log10(sum / frame.size + 1e-12)).toFloat().coerceAtLeast(FLOOR_DBFS)
         val durationMs = frame.size * 1000f / sampleRate
 
+        lastUpdate = android.os.SystemClock.elapsedRealtime()
         frames.addLast(Frame(durationMs, levelDb))
         framesMs += durationMs
         while (framesMs > HISTORY_MS && frames.size > 1) framesMs -= frames.removeFirst().durationMs
@@ -70,6 +72,17 @@ class MicLevelMonitor {
         return levels[((levels.size - 1) * percentile.coerceIn(0f, 1f)).toInt()]
     }
 
+    /**
+     * Median frame level over the last [windowMs], or null unless that much audio was heard and
+     * the microphone is still delivering (a frame within the last 2 s).
+     */
+    @Synchronized
+    fun medianDbfs(windowMs: Long): Float? {
+        if (frames.isEmpty() || framesMs < windowMs * 0.9f) return null
+        if (android.os.SystemClock.elapsedRealtime() - lastUpdate > 2_000L) return null
+        return floorDbfs(windowMs, 0.5f)
+    }
+
     @Synchronized
     fun reset() {
         frames.clear()
@@ -90,7 +103,9 @@ class MicLevelMonitor {
         /** Digital silence reads as this rather than minus infinity. */
         private const val FLOOR_DBFS = -100f
 
-        private const val HISTORY_MS = 5_000f
+        // Long enough for the 10 s ambient_noise median.
+        private const val HISTORY_MS = 10_500f
+        const val AMBIENT_WINDOW_MS = 10_000L
 
     }
 }
