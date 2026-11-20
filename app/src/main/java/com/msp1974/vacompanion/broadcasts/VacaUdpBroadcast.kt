@@ -58,6 +58,9 @@ object VacaBroadcastType {
     // Wake word arbitration: devices report detections to the master, which announces the winner.
     const val WAKE_DETECTION = "wake_detection"
     const val WAKE_DECISION = "wake_decision"
+    // A strong near miss (score >= 0.4): the master may give this device the wake word if it was
+    // heard much louder than every detection (the arbiter on a wired Linux device implements it).
+    const val WAKE_NEAR_MISS = "wake_near_miss"
 
     // Sent by the device running a pipeline to the others in its duck group (area or custom zone).
     const val DUCK = "duck"
@@ -190,8 +193,13 @@ class VacaUdpBroadcast(
         private const val REDUNDANT_GAP_MS = 25L
         private val REDUNDANT_TYPES = setOf(
             VacaBroadcastType.WAKE_DETECTION, VacaBroadcastType.WAKE_DECISION,
-            VacaBroadcastType.DUCK, VacaBroadcastType.PIPELINE_COMPLETED,
+            VacaBroadcastType.DUCK, VacaBroadcastType.PIPELINE_COMPLETED, VacaBroadcastType.WAKE_NEAR_MISS,
         )
+        private const val NEAR_MISS_MIN_SCORE = 0.4f
+        private const val NEAR_MISS_MEMORY_MS = 5_500L
+        // Events for the satellite: this device's near miss won / it must stop (taken over).
+        const val EVENT_NEAR_MISS_WON = "arbitrationNearMissWon"
+        const val EVENT_TAKEN_OVER = "arbitrationTakenOver"
 
         // A device that won a wake word is taken as answering until it says its pipeline completed,
         // or for at most this long; meanwhile other devices ignore their own detections.
@@ -252,7 +260,21 @@ class VacaUdpBroadcast(
         addHandler(VacaBroadcastType.WAKE_DECISION) { msg ->
             val winner = msg.data[DATA_WINNER]?.jsonPrimitive?.contentOrNull.orEmpty()
             val ids = msg.data[DATA_IDS]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
+            val reason = msg.data["reason"]?.jsonPrimitive?.contentOrNull
+            val margin = msg.data["margin_db"]?.jsonPrimitive?.floatOrNull
+            ids.forEach { results[it] = reason to margin }
             completeAwaiting(winner, ids)
+            // Taken over: a device that heard the user much louder answers instead of this one.
+            if (msg.data["stop"]?.jsonPrimitive?.contentOrNull == config.uuid) {
+                Timber.i("VacaUdpBroadcast: taken over by ${winner.substringBeforeLast('-')} ($margin dB louder), stopping")
+                config.eventBroadcaster.notifyEvent(Event(EVENT_TAKEN_OVER, "", winner))
+            }
+            // This device's near miss was given the wake word.
+            if (myNearMisses.remove(winner) != null) {
+                lastResult = Triple(true, reason, margin)
+                Timber.i("VacaUdpBroadcast: near miss won the wake word ($reason, $margin dB)")
+                config.eventBroadcaster.notifyEvent(Event(EVENT_NEAR_MISS_WON, "", winner))
+            }
         }
         addHandler(VacaBroadcastType.DUCK) { msg ->
             // pipeline_completed is always passed on: unducking something that never ducked does nothing.
@@ -309,9 +331,10 @@ class VacaUdpBroadcast(
      */
     suspend fun arbitrateWakeWord(score: Float, levelDb: Float? = null, contest: Boolean = true): Boolean {
         val wakeWordKey = key(config.wakeWord)
-        // Another device is answering (it won a wake word and hasn't finished): what this device
-        // heard is most likely that device's voice or the same conversation, so it stays quiet.
-        if (contest && config.wakeWordArbitrationEnabled) {
+        // Another device is answering (it won a wake word and hasn't finished). With a master, this
+        // device still reports: the master hands the wake word over if this one heard the user much
+        // louder (takeover), else tells it it lost. Without one, it stays quiet.
+        if (contest && config.wakeWordArbitrationEnabled && masterId == null) {
             otherAnswering()?.let { peer ->
                 Timber.i("VacaUdpBroadcast: $peer is answering, ignoring this detection")
                 return false
@@ -345,7 +368,9 @@ class VacaUdpBroadcast(
             return true
         }
         val won = winner == id
-        Timber.i("VacaUdpBroadcast: wake word arbitration ${if (won) "won" else "lost"} (score=$score, level=$levelDb)")
+        val (reason, margin) = results.remove(id) ?: (null to null)
+        lastResult = Triple(won, reason, margin)
+        Timber.i("VacaUdpBroadcast: wake word arbitration ${if (won) "won" else "lost"} ($reason, margin=$margin, score=$score, level=$levelDb)")
         if (won) sendDuck()
         return won
     }
@@ -370,6 +395,32 @@ class VacaUdpBroadcast(
                 if (responding) put(DATA_RESPONDING, JsonPrimitive(true))
             })
         }
+    }
+
+    /** Why the last decision about this device went the way it did: won, reason, margin (dB). */
+    @Volatile var lastResult: Triple<Boolean, String?, Float?> = Triple(true, null, null)
+        private set
+    private val results = ConcurrentHashMap<String, Pair<String?, Float?>>()
+    private val myNearMisses = ConcurrentHashMap<String, Long>()
+
+    /**
+     * A strong near miss: reported to the master, which gives it the wake word if it was heard far
+     * louder than every detection (EVENT_NEAR_MISS_WON then tells the satellite to answer).
+     */
+    fun reportNearMiss(score: Float, levelDb: Float?) {
+        if (score < NEAR_MISS_MIN_SCORE || !config.wakeWordArbitrationEnabled || key(config.wakeWord).isEmpty()) return
+        if (masterId == null || isMaster) return // only a master that judges near misses (the Linux arbiter)
+        if (presence.competitors(config.wakeWord, config.uuid).isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+        myNearMisses.entries.removeIf { now - it.value > NEAR_MISS_MEMORY_MS }
+        val id = "${config.uuid}-${detectionCounter.incrementAndGet()}"
+        myNearMisses[id] = now
+        send(VacaBroadcastType.WAKE_NEAR_MISS, buildJsonObject {
+            put(DATA_ID, JsonPrimitive(id))
+            put(DATA_SCORE, JsonPrimitive(score))
+            put(DATA_WAKE_WORD, JsonPrimitive(config.wakeWord))
+            if (levelDb != null) put(DATA_LEVEL, JsonPrimitive(levelDb))
+        })
     }
 
     /**

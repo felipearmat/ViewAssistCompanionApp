@@ -770,6 +770,14 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 put("wake_word_detection", buildJsonObject {
                     detectionJson(detection, level).forEach { (k, v) -> put(k, v) }
                     put("answered", answered)
+                    // Why the arbitration went this way (on winners and losers).
+                    VacaUdpBroadcast.instance?.lastResult?.let { (won, reason, margin) ->
+                        putJsonObject("arbitration") {
+                            put("won", won)
+                            put("reason", reason)
+                            put("margin_db", margin)
+                        }
+                    }
                 })
             })
         }.onFailure { Timber.e(it, "Unable to send wake word detection status") }
@@ -806,6 +814,32 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             wakeClips.onDetected(detection.timestamp, data)
             wakeClips.finish(detection.timestamp, "near_miss")
         }
+        // A strong near miss may still be this device's to answer, if the arbiter finds it was heard
+        // far louder here than wherever the wake word was detected.
+        if (audioPipeline == null && !isResponding()) {
+            lastNearMiss = detection to level
+            VacaUdpBroadcast.instance?.reportNearMiss(detection.score, level)
+        }
+    }
+
+    private var lastNearMiss: Pair<WakeWordEngineProvider.WakeWordDetection, Float?>? = null
+
+    // The arbiter gave this device a wake word it only near-missed: answer as if detected.
+    private suspend fun answerNearMiss() {
+        val (detection, level) = lastNearMiss ?: return
+        lastNearMiss = null
+        if (clientId.isEmpty() || audioPipeline != null || isResponding()) return
+        Timber.i("Answering a near miss the arbiter gave this device (score ${detection.score})")
+        sendWakeWordDetectionStatus(detection, level, answered = true)
+        config.eventBroadcaster.notifyEvent(Event(EVENT_LOCAL_WAKE_WORD_DETECTED, "", ""))
+        indicate(AssistIndicator.State.LISTENING)
+        playWakeWordDetectionSound()
+        if (config.screenOnWakeWord) {
+            config.screenOn = true
+            config.screenSaver = false
+        }
+        audioLogManager.onWakeWordDetected(detection.timestamp, detection.wakeWord, detection.score, level)
+        startAudioPipeline(PipelineStartMode.WAKE_WORD_DETECTED, detection.timestamp)
     }
 
     // The on-screen indicator follows the assistant only when assist_indicator is on.
@@ -1293,6 +1327,13 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     override fun onEventTriggered(event: Event) {
         when (event.eventName) {
+            VacaUdpBroadcast.EVENT_NEAR_MISS_WON -> scope.launch { answerNearMiss() }
+            // Another device heard the user much louder and answers instead: stop this one.
+            VacaUdpBroadcast.EVENT_TAKEN_OVER -> scope.launch {
+                audioPipeline?.stop()
+                audioPipeline = null
+                indicate(AssistIndicator.State.IDLE)
+            }
             // A setting changed on the device (Configuration screen): tell HA, under its settings key.
             "sendSettingToHA" -> sendPendingSettings()
             "requestSettings" -> {
