@@ -58,7 +58,7 @@ class VoicePlayerService : Service(), EventListener {
 
     override fun onEventTriggered(event: Event) {
         if (event.eventName == "audioOutputId") {
-            mediaPlayer?.setPreferredDevice(AudioOutputRouter.resolvePreferredDevice(this, config))
+            mediaPlayer?.let { AudioOutputRouter.routeIfNeeded(it, AudioOutputRouter.resolvePreferredDevice(this, config)) }
         }
     }
 
@@ -89,7 +89,7 @@ class VoicePlayerService : Service(), EventListener {
                 )
             )
             .build()
-            .apply { setPreferredDevice(AudioOutputRouter.resolvePreferredDevice(this@VoicePlayerService, config)) }
+            .also { AudioOutputRouter.routeIfNeeded(it, AudioOutputRouter.resolvePreferredDevice(this@VoicePlayerService, config)) }
     }
 
     fun start(rate: Int, width: Int, channels: Int) {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Build
 import com.msp1974.vacompanion.settings.APPConfig
 import timber.log.Timber
@@ -73,6 +74,24 @@ object AudioOutputRouter {
             outputs.firstOrNull { it.type in types }?.let { return it.id }
         }
         return -1
+    }
+
+    /**
+     * Points [track] at [device] only when it isn't already playing there. Changing a track's
+     * preferred device invalidates it, and Android rebuilds it at the next start() or write
+     * ("dead IAudioTrack ... creating a new one"), which can cut the start of what it plays.
+     * A new track is routed as soon as it is built, so most of the time nothing needs doing.
+     */
+    fun routeIfNeeded(track: AudioTrack, device: AudioDeviceInfo?) {
+        val current = track.routedDevice
+        if (device == null) {
+            if (track.preferredDevice != null) track.setPreferredDevice(null)
+            return
+        }
+        if (current?.id == device.id && track.preferredDevice == null) return
+        if (track.preferredDevice?.id == device.id) return
+        Timber.d("AudioOutputRouter: routing track from ${current?.type} to ${device.type}")
+        track.setPreferredDevice(device)
     }
 
     fun resolvePreferredDevice(context: Context, config: APPConfig): AudioDeviceInfo? {
