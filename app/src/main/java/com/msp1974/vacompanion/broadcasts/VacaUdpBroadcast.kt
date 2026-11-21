@@ -126,6 +126,9 @@ class VacaUdpBroadcast(
 ) : EventListener {
 
     private val config = deviceManager.config
+    // When this device answered (pipeline completed), for the "least used" part of its priority.
+    private val answered = ArrayDeque<Long>()
+    @Volatile private var wiredChecked: Pair<Boolean, Long>? = null
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
     private val handlers = ConcurrentHashMap<String, CopyOnWriteArrayList<(VacaBroadcastMessage) -> Unit>>()
@@ -196,6 +199,9 @@ class VacaUdpBroadcast(
             VacaBroadcastType.DUCK, VacaBroadcastType.PIPELINE_COMPLETED, VacaBroadcastType.WAKE_NEAR_MISS,
         )
         private const val NEAR_MISS_MIN_SCORE = 0.4f
+        private const val WIRED_PRIORITY = 8
+        private const val SATELLITE_MAX_PRIORITY = 9
+        private const val USAGE_WINDOW_MS = 24 * 3600 * 1000L
         private const val NEAR_MISS_MEMORY_MS = 5_500L
         // Events for the satellite: this device's near miss won / it must stop (taken over).
         const val EVENT_NEAR_MISS_WON = "arbitrationNearMissWon"
@@ -517,7 +523,7 @@ class VacaUdpBroadcast(
      */
     private fun onMasterSeen(sender: String, priority: Int) {
         val current = masterId
-        val currentPriority = if (current == config.uuid) config.masterPriority else masterPriority
+        val currentPriority = if (current == config.uuid) myPriority else masterPriority
         val better = priority > currentPriority || (priority == currentPriority && current != null && sender < current)
         if (current == null || current == sender || better) {
             if (current == config.uuid && sender != current) Timber.i("VacaUdpBroadcast: $sender is master, standing down")
@@ -531,7 +537,47 @@ class VacaUdpBroadcast(
 
     @Volatile private var masterPriority = 0
 
-    private fun masterData() = buildJsonObject { put(DATA_PRIORITY, JsonPrimitive(config.masterPriority)) }
+    private fun masterData() = buildJsonObject { put(DATA_PRIORITY, JsonPrimitive(myPriority)) }
+
+
+    /**
+     * Master priority, the same rule as vaca-linux: 10 = the Home Assistant arbiter; 8 = a device
+     * on a wired network; 6..1 = Wi-Fi devices, the less they answered in the last 24 h the higher
+     * (6 = none, 1 = more than 60). A master_priority setting above 0 overrides it, capped at 9
+     * so Home Assistant always judges while it is up.
+     */
+    private val myPriority: Int
+        get() {
+            val manual = config.masterPriority
+            if (manual > 0) return minOf(manual, SATELLITE_MAX_PRIORITY)
+            if (onWiredNetwork()) return WIRED_PRIORITY
+            val n = answeredLastDay()
+            return when {
+                n == 0 -> 6
+                n <= 5 -> 5
+                n <= 15 -> 4
+                n <= 30 -> 3
+                n <= 60 -> 2
+                else -> 1
+            }
+        }
+
+    private fun answeredLastDay(): Int = synchronized(answered) {
+        val now = SystemClock.elapsedRealtime()
+        while (answered.isNotEmpty() && now - answered.first() > USAGE_WINDOW_MS) answered.removeFirst()
+        answered.size
+    }
+
+    private fun onWiredNetwork(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        wiredChecked?.let { (wired, at) -> if (now - at < 60_000L) return wired }
+        val wired = runCatching {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true
+        }.getOrDefault(false)
+        wiredChecked = wired to now
+        return wired
+    }
 
     // Last address heard from each peer, with when, for the unicast copies (see send).
     private val peerAddressBook = ConcurrentHashMap<String, Pair<InetAddress, Long>>()
@@ -568,10 +614,10 @@ class VacaUdpBroadcast(
                     send(VacaBroadcastType.MASTER_HEARTBEAT, masterData())
                     lastHeartbeat = now
                 }
-            } else if (masterId != null && (config.masterPriority > masterPriority ||
-                    (config.masterPriority == masterPriority && config.uuid < masterId!!))) {
+            } else if (masterId != null && (myPriority > masterPriority ||
+                    (myPriority == masterPriority && config.uuid < masterId!!))) {
                 // A higher priority device takes over from the current master.
-                Timber.i("VacaUdpBroadcast: priority ${config.masterPriority} > master $masterId's $masterPriority, claiming")
+                Timber.i("VacaUdpBroadcast: priority $myPriority > master $masterId's $masterPriority, claiming")
                 masterId = config.uuid
                 lastMasterSeen = now
                 send(VacaBroadcastType.MASTER_CLAIM, masterData())
@@ -756,6 +802,7 @@ class VacaUdpBroadcast(
             // Others decide whether we compete with them by our wake word, so say when it changes.
             "wakeWord" -> sendPresence()
             EVENT_PIPELINE_COMPLETED -> {
+                synchronized(answered) { answered.addLast(SystemClock.elapsedRealtime()) }
                 send(VacaBroadcastType.PIPELINE_COMPLETED)
             }
         }
