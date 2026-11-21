@@ -47,6 +47,19 @@ class EndOfSpeechDetectorTest {
     }
 
     @Test
+    fun noisyRoomAfterSuppressedStartEnds() {
+        // 21/11, Redmi in the living room: noise suppression gave near silence for the first
+        // frames, the room sat at about -45 dBFS and the reply never ended (46 s of listening).
+        val d = EndOfSpeechDetector()
+        val room = frame(250)                  // about -45 dBFS
+        val voice = frame(2500)                // about -25 dBFS
+        feed(d, ShortArray(1280), 3)           // digital silence
+        feed(d, room, 5)
+        assertTrue(EndOfSpeechDetector.Result.SPEECH_STARTED in feed(d, voice, 6))
+        assertTrue(EndOfSpeechDetector.Result.SPEECH_ENDED in feed(d, room, 10))
+    }
+
+    @Test
     fun aSingleClickIsNotSpeech() {
         val d = EndOfSpeechDetector()
         feed(d, quiet, 3)
