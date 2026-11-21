@@ -1039,6 +1039,15 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     if (session.isNullOrEmpty() || session == ambientCapture.sessionId) ambientCapture.stop()
                 }
                 "get-logs" -> scope.launch { handleGetLogs(payloadStr) }
+                // Managed (device owner) satellites: silent update from a URL, and giving the
+                // ownership up so the phone is an ordinary phone again.
+                "install_update" -> if (payloadStr.isNotEmpty()) {
+                    val p = Json.parseToJsonElement(payloadStr).jsonObject
+                    val url = p["url"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    val sha = p["sha256"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    scope.launch { com.msp1974.vacompanion.device.ManagedDevice.installUpdate(context, url, sha) }
+                }
+                "release_device_owner" -> com.msp1974.vacompanion.device.ManagedDevice.release(context)
                 "wake" -> scope.launch {
                     handleWakeWordDetection(WakeWordEngineProvider.WakeWordDetection(
                         wakeWordId = "manual_wake",

@@ -132,6 +132,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         val splashscreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        // A dedicated satellite whose app is device owner: permissions, home app (no-op otherwise).
+        com.msp1974.vacompanion.device.ManagedDevice.apply(this)
 
         // setDarkMode() only runs when the setting changes, and the system-wide night mode it also
         // sets is refused on devices where it is locked (e.g. the Echo Show 8), so apply the

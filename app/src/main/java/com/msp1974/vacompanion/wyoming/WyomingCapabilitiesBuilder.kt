@@ -9,7 +9,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import javax.inject.Inject
 
-class WyomingCapabilitiesBuilder @Inject constructor(deviceManager: DeviceManager) {
+class WyomingCapabilitiesBuilder @Inject constructor(private val deviceManager: DeviceManager) {
 
     val config = deviceManager.config
     val deviceInfo = deviceManager.deviceInfo
@@ -35,6 +35,9 @@ class WyomingCapabilitiesBuilder @Inject constructor(deviceManager: DeviceManage
             put("has_screen", true)
             put("casa_protocol", CASA_PROTOCOL)
             putJsonArray("casa_features") { CASA_FEATURES.forEach { add(JsonPrimitive(it)) } }
+            // A dedicated satellite whose app is device owner: HA can update it silently
+            // (install_update) and release it (release_device_owner).
+            put("device_owner", com.msp1974.vacompanion.device.ManagedDevice.isOwner(deviceManager.context))
             putJsonArray("alarms") {
                 availableAlarms.forEach { alarm ->
                     add(buildJsonObject {
@@ -53,5 +56,5 @@ val CASA_FEATURES = listOf(
     "wake_word_clips", "wake_word_threshold_music", "local_end_of_speech", "assist_indicator",
     "wake_word_detection", "wake_word_near_miss", "ambient_capture", "level_offset_db",
     "mic_source", "mic_auto_switch", "output_auto_switch", "conversation_ducking", "indicator_prompt", "chat_drawer", "ambient_noise",
-    "bt_keep_alive",
+    "bt_keep_alive", "install_update",
 )
