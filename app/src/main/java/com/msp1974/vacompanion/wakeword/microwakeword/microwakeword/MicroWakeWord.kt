@@ -9,7 +9,8 @@ class MicroWakeWord(
     val id: String,
     val wakeWord: String,
     model: ByteBuffer,
-    private val probabilityCutoff: Float,
+    // Read on every frame, so a new threshold from HA applies without reloading the model.
+    private val probabilityCutoff: () -> Float,
     private val slidingWindowSize: Int
 ) : AutoCloseable {
     private val interpreter: Interpreter = Interpreter(model)
@@ -62,7 +63,7 @@ class MicroWakeWord(
             probabilities.removeFirst()
         probabilities.add(probability)
 
-        return probabilities.size == slidingWindowSize && probabilities.average() > probabilityCutoff
+        return probabilities.size == slidingWindowSize && probabilities.average() > probabilityCutoff()
     }
 
     override fun close() {
@@ -70,11 +71,12 @@ class MicroWakeWord(
     }
 
     companion object {
-        suspend fun fromWakeWord(wakeWord: WakeWordWithId, threshold: Float = -1f): MicroWakeWord = MicroWakeWord(
+        /** [threshold] is read live; a negative value means the model's own cutoff. */
+        suspend fun fromWakeWord(wakeWord: WakeWordWithId, threshold: () -> Float = { -1f }): MicroWakeWord = MicroWakeWord(
             id = wakeWord.id,
             wakeWord = wakeWord.wakeWord.wake_word,
             model = wakeWord.load(),
-            probabilityCutoff = if (threshold >= 0f) threshold else wakeWord.wakeWord.micro.probability_cutoff,
+            probabilityCutoff = { threshold().let { if (it >= 0f) it else wakeWord.wakeWord.micro.probability_cutoff } },
             slidingWindowSize = wakeWord.wakeWord.micro.sliding_window_size
         )
     }

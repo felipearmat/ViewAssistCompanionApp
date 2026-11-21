@@ -130,7 +130,7 @@ open class MicroWakeWordEngine (
         wakeWords: List<String>,
         stopWords: List<String>
     ) = MicroWakeWordDetector(
-            loadWakeWords(wakeWords, _availableWakeWords, config.wakeWordThreshold) +
+            loadWakeWords(wakeWords, _availableWakeWords) { config.wakeWordThreshold } +
             loadWakeWords(stopWords, _availableStopWords)
         )
 
@@ -138,7 +138,7 @@ open class MicroWakeWordEngine (
     private suspend fun loadWakeWords(
         ids: List<String>,
         wakeWords: Map<String, WakeWordWithId>,
-        threshold: Float = -1f
+        threshold: () -> Float = { -1f }
     ): List<MicroWakeWord> = buildList {
         for (id in ids) {
             wakeWords[id]?.let { wakeWord ->

@@ -98,7 +98,9 @@ class SatelliteCustomEventHandler(
             "alarmVolume" -> {
                 volumeManager.setVolume(AudioManager.STREAM_ALARM, event.newValue as Int)
             }
-            "wakeWord", "wakeWordSound", "wakeWordThreshold", "wakeWordEngine" -> {
+            // The threshold is read live by the engines: changing it needs no restart, which would
+            // reopen the microphone (HA's noise control changes it often).
+            "wakeWord", "wakeWordSound", "wakeWordEngine" -> {
                 scope.launch {
                     satellite.restartWakeWordDetection()
                 }
