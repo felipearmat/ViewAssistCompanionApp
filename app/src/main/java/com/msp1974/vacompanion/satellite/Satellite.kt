@@ -13,6 +13,7 @@ import androidx.core.net.toUri
 import com.msp1974.vacompanion.audio.AudioDSP
 import com.msp1974.vacompanion.audio.AudioOutputRouter
 import com.msp1974.vacompanion.audio.DetectionBuffer
+import com.msp1974.vacompanion.audio.BluetoothKeepAlive
 import com.msp1974.vacompanion.audio.MicLevelMonitor
 import com.msp1974.vacompanion.audio.MicrophoneAudioStream
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
@@ -1267,8 +1268,11 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         }
     }
 
+    private val btKeepAlive by lazy { BluetoothKeepAlive(context, config, scope) }
+
     suspend fun startSensorMonitor() {
         startAmbientNoise()
+        btKeepAlive.start()
         sensorJob = scope.launch {
             deviceManager.sensors.collect { data ->
                 val data = buildJsonObject {
@@ -1330,6 +1334,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     suspend fun stopSensors() {
         sensorJob?.cancel()
         ambientNoiseJob?.cancel()
+        btKeepAlive.stop()
         stopMotionDetection()
     }
 

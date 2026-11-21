@@ -417,6 +417,16 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != thinkingDelay) eventBroadcaster.notifyEvent(Event("thinkingDelay", old, thinkingDelay))
         }
 
+    // Keeps a connected Bluetooth speaker awake with a continuous, inaudible stream (on by default).
+    // Stored on the device; HA can push it (bt_keep_alive).
+    var btKeepAlive: Boolean
+        get() = this.sharedPrefs.getBoolean("bt_keep_alive", true)
+        set(value) {
+            val old = btKeepAlive
+            this.sharedPrefs.edit { putBoolean("bt_keep_alive", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("btKeepAlive", old, value))
+        }
+
     // Sound looped while the assistant works out its answer ("none" = off). An id from
     // availableWakeSounds, so a custom sound uploaded to Home Assistant can be used. Stored on
     // the device, so it survives a restart; HA can also push it.
@@ -809,6 +819,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["thinking_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingSound = it }
         settings["thinking_intro_sound"]?.jsonPrimitive?.contentOrNull?.let { thinkingIntroSound = it }
         settings["thinking_delay"]?.jsonPrimitive?.floatOrNull?.let { thinkingDelay = it }
+        settings["bt_keep_alive"]?.jsonPrimitive?.booleanOrNull?.let { btKeepAlive = it }
         settings["wake_word_clips"]?.jsonPrimitive?.booleanOrNull?.let { wakeWordClipsEnabled = it }
         settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
         settings["voice_gain"]?.jsonPrimitive?.floatOrNull?.let { voiceGainDb = it.toInt() }
