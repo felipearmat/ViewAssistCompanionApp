@@ -453,7 +453,7 @@ class SendspinPlayer(
                 val h = handle
                 if (h != 0L) NativeSendspin.nativeSetPreferredServer(h, preferredServerIp())
             }
-            "audioOutputId" ->
+            "audioOutputId", "audioRouteChanged" ->
                 output.setPreferredDevice(AudioOutputRouter.resolvePreferredDevice(context, config))
             // A set-volume action while Sendspin is the thing playing (0-100).
             "sendspinSetVolume" -> (event.newValue as? Float)?.let { setVolumeFromDevice(it.toInt()) }

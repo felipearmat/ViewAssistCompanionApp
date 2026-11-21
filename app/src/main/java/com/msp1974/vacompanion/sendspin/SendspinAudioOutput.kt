@@ -200,8 +200,12 @@ class SendspinAudioOutput {
         addReading(atUs, presented)
         val fitted = fittedPosition(nowUs) ?: presented
         // Never further than a burst ahead of what the track reported, so a real stall (underrun)
-        // still shows.
-        val estimated = minOf(fitted, presented + sampleRate * MAX_LEAD_MS / 1000)
+        // still shows. The report is from [atUs], often 100+ ms ago on Bluetooth: the limit moves
+        // on from there at the nominal rate. (Capping at the bare report held the estimate back
+        // whenever a report came late, and it then jumped ~90 ms forward: an audible stutter.)
+        val sinceUs = (nowUs - atUs).coerceAtLeast(0L)
+        val limit = presented + sampleRate * (sinceUs + MAX_LEAD_MS * 1000) / 1_000_000
+        val estimated = minOf(fitted, limit)
         val delta = estimated - lastPresented
         if (delta <= 0) return null
         lastPresented = estimated
@@ -251,7 +255,8 @@ class SendspinAudioOutput {
 
     fun setPreferredDevice(device: AudioDeviceInfo?) {
         preferredDevice = device
-        runCatching { track?.setPreferredDevice(device) }
+        // Only when it changes anything: setting it invalidates the track (a brief gap).
+        track?.let { t -> runCatching { com.msp1974.vacompanion.audio.AudioOutputRouter.routeIfNeeded(t, device) } }
     }
 
     /** Stops output and drops queued audio, keeping the track for the next stream. */

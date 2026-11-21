@@ -248,7 +248,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     Timber.d("Audio devices changed - sending capabilities")
                     sendCapabilities()
                 }
-                // Connecting or removing a device can move the active input/output.
+                // Connecting or removing a device can move the active input/output. Players that
+                // are already playing keep their route until told: re-route them (output_auto_switch).
+                config.eventBroadcaster.notifyEvent(Event(EVENT_AUDIO_ROUTE_CHANGED, "", ""))
                 sendAudioSettingsIfChanged()
                 // Android keeps a volume per output: report the new output's, so HA shows (and
                 // doesn't overwrite) the volume this output was last left at.
@@ -1422,6 +1424,8 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         // Near misses at or above this score also send their audio (when wake_word_clips is on).
         const val NEAR_MISS_CLIP_MIN_SCORE = 0.3f
         const val EVENT_LOCAL_WAKE_WORD_DETECTED = "localWakeWordDetected"
+        // An output was connected or removed: players re-resolve their preferred output.
+        const val EVENT_AUDIO_ROUTE_CHANGED = "audioRouteChanged"
         const val EVENT_LOCAL_WAKE_WORD_DISMISSED = "localWakeWordDismissed"
         fun isoNow(): String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
 

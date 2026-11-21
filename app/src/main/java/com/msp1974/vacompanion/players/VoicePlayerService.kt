@@ -57,7 +57,7 @@ class VoicePlayerService : Service(), EventListener {
     }
 
     override fun onEventTriggered(event: Event) {
-        if (event.eventName == "audioOutputId") {
+        if (event.eventName == "audioOutputId" || event.eventName == "audioRouteChanged") {
             mediaPlayer?.let { AudioOutputRouter.routeIfNeeded(it, AudioOutputRouter.resolvePreferredDevice(this, config)) }
         }
     }
