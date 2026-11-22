@@ -1048,6 +1048,10 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     scope.launch { com.msp1974.vacompanion.device.ManagedDevice.installUpdate(context, url, sha) }
                 }
                 "release_device_owner" -> com.msp1974.vacompanion.device.ManagedDevice.release(context)
+                // Managed satellites carry no personal accounts (removed, and new ones blocked).
+                "remove_accounts" -> scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    com.msp1974.vacompanion.device.ManagedDevice.removeAccounts(context)
+                }
                 "wake" -> scope.launch {
                     handleWakeWordDetection(WakeWordEngineProvider.WakeWordDetection(
                         wakeWordId = "manual_wake",

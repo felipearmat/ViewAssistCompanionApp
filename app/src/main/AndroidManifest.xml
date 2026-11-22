@@ -116,6 +116,7 @@
             <intent-filter>
                 <action android:name="com.msp1974.vacompanion.RELEASE_OWNER" />
                 <action android:name="com.msp1974.vacompanion.INSTALL_UPDATE" />
+                <action android:name="com.msp1974.vacompanion.REMOVE_ACCOUNTS" />
             </intent-filter>
         </receiver>
         <receiver

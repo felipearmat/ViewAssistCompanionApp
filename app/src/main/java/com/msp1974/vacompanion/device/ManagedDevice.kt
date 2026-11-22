@@ -1,6 +1,8 @@
 package com.msp1974.vacompanion.device
 
 import android.Manifest
+import android.accounts.Account
+import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
@@ -70,6 +72,45 @@ object ManagedDevice {
         Timber.i("Managed device: owner policies applied")
     }
 
+    // Account types a dedicated satellite must not have: Google, Samsung, Xiaomi.
+    private val BLOCKED_ACCOUNT_TYPES = listOf(
+        "com.google", "com.osp.app.signin", "com.samsung.android.mobileservice",
+        "com.samsung.android.coreapps", "com.xiaomi",
+    )
+
+    /**
+     * A dedicated satellite has no personal accounts, for the user's safety: removes them and
+     * stops new ones being added (release undoes the block). [accounts] lists "type:name" pairs
+     * (as ADB reads them from dumpsys), for accounts this app can't see; otherwise every account
+     * visible to it is removed. Returns how many were removed.
+     */
+    fun removeAccounts(context: Context, accounts: List<String> = emptyList()): Int {
+        if (!isOwner(context)) return 0
+        val manager = AccountManager.get(context)
+        val targets = accounts.mapNotNull { entry ->
+            val type = entry.substringBefore(':', "")
+            val name = entry.substringAfter(':', "")
+            if (type.isEmpty() || name.isEmpty()) null else Account(name, type)
+        }.ifEmpty { manager.accounts.toList() }
+        var removed = 0
+        for (account in targets) {
+            runCatching { manager.removeAccount(account, null, null, null).result }
+                .onSuccess { ok -> if (ok.getBoolean(AccountManager.KEY_BOOLEAN_RESULT)) removed++ }
+                .onFailure { Timber.w("Managed device: account of type ${account.type} not removed: ${it.message}") }
+        }
+        blockAccounts(context, true)
+        Timber.i("Managed device: removed $removed of ${targets.size} account(s)")
+        return removed
+    }
+
+    private fun blockAccounts(context: Context, blocked: Boolean) {
+        val dpm = dpm(context)
+        val admin = admin(context)
+        for (type in BLOCKED_ACCOUNT_TYPES) {
+            runCatching { dpm.setAccountManagementDisabled(admin, type, blocked) }
+        }
+    }
+
     /** Gives up device ownership, so the phone is an ordinary phone again (no wipe needed). */
     fun release(context: Context): Boolean {
         if (!isOwner(context)) return false
@@ -77,6 +118,7 @@ object ManagedDevice {
         val admin = admin(context)
         runCatching { dpm.clearPackagePersistentPreferredActivities(admin, context.packageName) }
         runCatching { dpm.setLockTaskPackages(admin, emptyArray()) }
+        runCatching { blockAccounts(context, false) }
         return runCatching { dpm.clearDeviceOwnerApp(context.packageName) }
             .onSuccess { Timber.i("Managed device: device owner released") }
             .onFailure { Timber.e(it, "Managed device: release failed") }
@@ -148,11 +190,17 @@ class InstallStatusReceiver : BroadcastReceiver() {
  * holds and ordinary apps don't):
  *   adb shell am broadcast -a com.msp1974.vacompanion.RELEASE_OWNER -n com.msp1974.vacompanion/.device.OwnerCommandReceiver
  *   adb shell am broadcast -a com.msp1974.vacompanion.INSTALL_UPDATE --es url <url> --es sha256 <hex> -n ...
+ *   adb shell am broadcast -a com.msp1974.vacompanion.REMOVE_ACCOUNTS [--es accounts type:name,...] -n ...
  */
 class OwnerCommandReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             ACTION_RELEASE -> ManagedDevice.release(context)
+            ACTION_REMOVE_ACCOUNTS -> {
+                val accounts = intent.getStringExtra("accounts")?.split(',')?.map { it.trim() }.orEmpty()
+                // AccountManager futures must not run on the main thread.
+                Thread { ManagedDevice.removeAccounts(context, accounts) }.start()
+            }
             ACTION_INSTALL -> {
                 val url = intent.getStringExtra("url") ?: return
                 val sha = intent.getStringExtra("sha256") ?: return
@@ -165,5 +213,6 @@ class OwnerCommandReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_RELEASE = "com.msp1974.vacompanion.RELEASE_OWNER"
         const val ACTION_INSTALL = "com.msp1974.vacompanion.INSTALL_UPDATE"
+        const val ACTION_REMOVE_ACCOUNTS = "com.msp1974.vacompanion.REMOVE_ACCOUNTS"
     }
 }
