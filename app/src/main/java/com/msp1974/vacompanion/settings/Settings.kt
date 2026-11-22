@@ -298,6 +298,13 @@ class APPConfig @Inject constructor(val context: Context) {
             this.sharedPrefs.edit { putString("arbitration_key", value) }
         }
 
+    // Installation keys during and after a rotation ("id:key,..."; the first signs), pushed by HA.
+    var arbitrationKeys: String
+        get() = this.sharedPrefs.getString("arbitration_keys", "") ?: ""
+        set(value) {
+            this.sharedPrefs.edit { putString("arbitration_keys", value) }
+        }
+
     var masterPriority: Int
         get() = this.sharedPrefs.getInt("master_priority", 0).coerceIn(0, 10)
         set(value) {
@@ -834,6 +841,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
         settings["arbitration_key"]?.jsonPrimitive?.contentOrNull?.let { arbitrationKey = it }
+        settings["arbitration_keys"]?.jsonPrimitive?.contentOrNull?.let { arbitrationKeys = it }
         settings["chat_path"]?.jsonPrimitive?.contentOrNull?.let { chatPath = it.trim().removePrefix("/") }
         settings["drawer_timeout"]?.jsonPrimitive?.floatOrNull?.let { drawerTimeout = it.toInt() }
         settings["level_offset_db"]?.jsonPrimitive?.floatOrNull?.let { levelOffsetDb = it }

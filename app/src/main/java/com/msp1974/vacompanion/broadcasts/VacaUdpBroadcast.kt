@@ -160,6 +160,19 @@ class VacaUdpBroadcast(
         const val PORT = 10950
         const val MAGIC = "VACA"
         const val SIGNED_VERSION = 2
+
+        /**
+         * Installation keys as "id:key" entries, separated by commas or new lines; the first one
+         * signs, all are accepted. A lone key without an id is id "0". Same as vaca-linux.
+         */
+        fun parseKeys(text: String): List<Pair<String, ByteArray>> =
+            text.replace('\n', ',').split(',').mapNotNull { raw ->
+                val entry = raw.trim()
+                if (entry.isEmpty()) return@mapNotNull null
+                val sep = entry.indexOf(':')
+                val (kid, key) = if (sep < 0) "0" to entry else entry.substring(0, sep).trim() to entry.substring(sep + 1).trim()
+                if (key.isEmpty()) null else kid to key.toByteArray()
+            }
         // A signed message older (or newer) than this is a replay: dropped.
         private const val MAX_AGE_MS = 60_000L
         const val VERSION = 1
@@ -752,7 +765,10 @@ class VacaUdpBroadcast(
      * Without one, messages go unsigned, as before. Same envelope as vaca-linux:
      * `{"magic":"VACA","v":2,"body":"<{type,sender,ts,data} as text>","sig":"<hex>"}`.
      */
-    private val key: ByteArray? get() = config.arbitrationKey.takeIf { it.isNotEmpty() }?.toByteArray()
+    // Installation keys as (id, key), the signing one first; empty = unsigned. During a rotation
+    // the current, the next and the previous key are all accepted, so nothing stops meanwhile.
+    private val keys: List<Pair<String, ByteArray>>
+        get() = parseKeys(config.arbitrationKeys.ifEmpty { config.arbitrationKey })
 
     private fun hmacHex(key: ByteArray, body: String): String {
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
@@ -761,8 +777,8 @@ class VacaUdpBroadcast(
     }
 
     private fun encode(type: String, data: JsonObject): ByteArray {
-        val k = key
-        if (k == null) {
+        val signing = keys.firstOrNull()
+        if (signing == null) {
             return buildJsonObject {
                 put("magic", JsonPrimitive(MAGIC))
                 put("v", JsonPrimitive(VERSION))
@@ -780,8 +796,9 @@ class VacaUdpBroadcast(
         return buildJsonObject {
             put("magic", JsonPrimitive(MAGIC))
             put("v", JsonPrimitive(SIGNED_VERSION))
+            put("kid", JsonPrimitive(signing.first))
             put("body", JsonPrimitive(body))
-            put("sig", JsonPrimitive(hmacHex(k, body)))
+            put("sig", JsonPrimitive(hmacHex(signing.second, body)))
         }.toString().toByteArray()
     }
 
@@ -790,17 +807,19 @@ class VacaUdpBroadcast(
         return try {
             val outer = Json.parseToJsonElement(String(packet.data, 0, packet.length)).jsonObject
             if (outer["magic"]?.jsonPrimitive?.contentOrNull != MAGIC) return null
-            val k = key
+            val known = keys
             val json = when (outer["v"]?.jsonPrimitive?.intOrNull) {
-                VERSION -> if (k == null) outer else return null
+                VERSION -> if (known.isEmpty()) outer else return null
                 SIGNED_VERSION -> {
                     val body = outer["body"]?.jsonPrimitive?.contentOrNull ?: return null
-                    if (k != null) {
-                        val sig = outer["sig"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        if (!java.security.MessageDigest.isEqual(hmacHex(k, body).toByteArray(), sig.toByteArray())) return null
+                    if (known.isNotEmpty()) {
+                        val sig = outer["sig"]?.jsonPrimitive?.contentOrNull.orEmpty().toByteArray()
+                        val kid = outer["kid"]?.jsonPrimitive?.contentOrNull
+                        val candidates = if (kid != null) known.filter { it.first == kid } else known
+                        if (candidates.none { java.security.MessageDigest.isEqual(hmacHex(it.second, body).toByteArray(), sig) }) return null
                     }
                     val inner = Json.parseToJsonElement(body).jsonObject
-                    if (k != null) {
+                    if (known.isNotEmpty()) {
                         val ts = inner["ts"]?.jsonPrimitive?.longOrNull ?: return null
                         if (kotlin.math.abs(System.currentTimeMillis() - ts) > MAX_AGE_MS) return null
                     }
