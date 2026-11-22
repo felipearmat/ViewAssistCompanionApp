@@ -30,6 +30,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import timber.log.Timber
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -158,6 +159,9 @@ class VacaUdpBroadcast(
     companion object {
         const val PORT = 10950
         const val MAGIC = "VACA"
+        const val SIGNED_VERSION = 2
+        // A signed message older (or newer) than this is a replay: dropped.
+        private const val MAX_AGE_MS = 60_000L
         const val VERSION = 1
         const val DATA_DUCK_GROUP = "duck_group"
         private const val MAX_PACKET_BYTES = 1024
@@ -663,13 +667,7 @@ class VacaUdpBroadcast(
                     DATA_DUCK_GROUP to JsonPrimitive(config.duckGroupKey)
                 )
                 if (copies > 1) extra[DATA_MESSAGE_ID] = JsonPrimitive(messageCounter.incrementAndGet())
-                val payload = buildJsonObject {
-                    put("magic", JsonPrimitive(MAGIC))
-                    put("v", JsonPrimitive(VERSION))
-                    put("type", JsonPrimitive(type))
-                    put("sender", JsonPrimitive(config.uuid))
-                    put("data", JsonObject(data + extra))
-                }.toString().toByteArray()
+                val payload = encode(type, JsonObject(data + extra))
 
                 val socket = sendSocket ?: DatagramSocket().apply { broadcast = true }.also { sendSocket = it }
                 // Subnet broadcast is delivered on networks that drop the limited broadcast address.
@@ -747,12 +745,69 @@ class VacaUdpBroadcast(
         }
     }
 
-    /** Returns the message only if this is a well-formed VACA broadcast, otherwise null. */
+    /**
+     * The installation key (arbitration_key, pushed by HA): with one, every message is signed
+     * (HMAC-SHA256 over the exact message text, with a timestamp) and unsigned, forged or stale
+     * ones are dropped, so no other device on the network can pose as master or forge decisions.
+     * Without one, messages go unsigned, as before. Same envelope as vaca-linux:
+     * `{"magic":"VACA","v":2,"body":"<{type,sender,ts,data} as text>","sig":"<hex>"}`.
+     */
+    private val key: ByteArray? get() = config.arbitrationKey.takeIf { it.isNotEmpty() }?.toByteArray()
+
+    private fun hmacHex(key: ByteArray, body: String): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
+        return mac.doFinal(body.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun encode(type: String, data: JsonObject): ByteArray {
+        val k = key
+        if (k == null) {
+            return buildJsonObject {
+                put("magic", JsonPrimitive(MAGIC))
+                put("v", JsonPrimitive(VERSION))
+                put("type", JsonPrimitive(type))
+                put("sender", JsonPrimitive(config.uuid))
+                put("data", data)
+            }.toString().toByteArray()
+        }
+        val body = buildJsonObject {
+            put("type", JsonPrimitive(type))
+            put("sender", JsonPrimitive(config.uuid))
+            put("ts", JsonPrimitive(System.currentTimeMillis()))
+            put("data", data)
+        }.toString()
+        return buildJsonObject {
+            put("magic", JsonPrimitive(MAGIC))
+            put("v", JsonPrimitive(SIGNED_VERSION))
+            put("body", JsonPrimitive(body))
+            put("sig", JsonPrimitive(hmacHex(k, body)))
+        }.toString().toByteArray()
+    }
+
+    /** Returns the message only if this is a well-formed VACA broadcast this device must accept. */
     private fun parse(packet: DatagramPacket): VacaBroadcastMessage? {
         return try {
-            val json = Json.parseToJsonElement(String(packet.data, 0, packet.length)).jsonObject
-            if (json["magic"]?.jsonPrimitive?.contentOrNull != MAGIC) return null
-            if (json["v"]?.jsonPrimitive?.intOrNull != VERSION) return null
+            val outer = Json.parseToJsonElement(String(packet.data, 0, packet.length)).jsonObject
+            if (outer["magic"]?.jsonPrimitive?.contentOrNull != MAGIC) return null
+            val k = key
+            val json = when (outer["v"]?.jsonPrimitive?.intOrNull) {
+                VERSION -> if (k == null) outer else return null
+                SIGNED_VERSION -> {
+                    val body = outer["body"]?.jsonPrimitive?.contentOrNull ?: return null
+                    if (k != null) {
+                        val sig = outer["sig"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        if (!java.security.MessageDigest.isEqual(hmacHex(k, body).toByteArray(), sig.toByteArray())) return null
+                    }
+                    val inner = Json.parseToJsonElement(body).jsonObject
+                    if (k != null) {
+                        val ts = inner["ts"]?.jsonPrimitive?.longOrNull ?: return null
+                        if (kotlin.math.abs(System.currentTimeMillis() - ts) > MAX_AGE_MS) return null
+                    }
+                    inner
+                }
+                else -> return null
+            }
             val type = json["type"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
             val sender = json["sender"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
             VacaBroadcastMessage(type, sender, json["data"] as? JsonObject ?: JsonObject(emptyMap()), packet.address)

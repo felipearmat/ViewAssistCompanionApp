@@ -291,6 +291,13 @@ class APPConfig @Inject constructor(val context: Context) {
     // Wake word arbitration master priority (0-10): the device with the highest runs the arbitration
     // (lowest id on a tie). Give it to the device with the steadiest Wi-Fi. Stored on the device; HA
     // can push it.
+    // Installation key for signed arbitration messages, pushed by HA (never sent back).
+    var arbitrationKey: String
+        get() = this.sharedPrefs.getString("arbitration_key", "") ?: ""
+        set(value) {
+            this.sharedPrefs.edit { putString("arbitration_key", value) }
+        }
+
     var masterPriority: Int
         get() = this.sharedPrefs.getInt("master_priority", 0).coerceIn(0, 10)
         set(value) {
@@ -826,6 +833,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["local_end_of_speech"]?.jsonPrimitive?.booleanOrNull?.let { localEndOfSpeech = it }
         settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
+        settings["arbitration_key"]?.jsonPrimitive?.contentOrNull?.let { arbitrationKey = it }
         settings["chat_path"]?.jsonPrimitive?.contentOrNull?.let { chatPath = it.trim().removePrefix("/") }
         settings["drawer_timeout"]?.jsonPrimitive?.floatOrNull?.let { drawerTimeout = it.toInt() }
         settings["level_offset_db"]?.jsonPrimitive?.floatOrNull?.let { levelOffsetDb = it }
