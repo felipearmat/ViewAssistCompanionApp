@@ -181,24 +181,38 @@ class SendspinAudioOutput {
         // presented; the playback head is only a fallback for drivers that don't provide one.
         val presented: Long
         val atUs: Long
-        if (runCatching { t.getTimestamp(timestamp) }.getOrDefault(false)) {
+        val head = t.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
+        headFrames += (head - lastHead) and 0xFFFF_FFFFL
+        lastHead = head
+        val stamped = runCatching { t.getTimestamp(timestamp) }.getOrDefault(false)
+        if (stamped) {
             presented = timestamp.framePosition
             atUs = timestamp.nanoTime / 1000
-        } else {
-            val head = t.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
-            headFrames += (head - lastHead) and 0xFFFF_FFFFL
-            lastHead = head
+        } else if (readings.isEmpty()) {
             presented = headFrames
             atUs = System.nanoTime() / 1000
+        } else {
+            // No timestamp this time: never mix in the playback head (it runs ahead by the output
+            // latency, a jump); go on from the last timestamp instead.
+            val last = readings.last()
+            presented = last[1]
+            atUs = last[0]
         }
+        stats.polls++
+        if (!stamped) stats.noStamp++
         // Bluetooth (A2DP) reports the presented position in bursts, ~90 ms apart on a Samsung
         // A20, which made the library lose and regain sync (audible stutter). A straight line is
         // fitted to the readings of the last few seconds (position against time): it smooths the
         // bursts and follows the real playback rate, which differs a little from the nominal one.
         // The position reported is where that line puts playback now.
         val nowUs = System.nanoTime() / 1000
-        addReading(atUs, presented)
-        val fitted = fittedPosition(nowUs) ?: presented
+        if (stamped || readings.isEmpty()) addReading(atUs, presented)
+        // Too few readings for a line (some Bluetooth stacks, e.g. a Redmi with a JBL Flip 6,
+        // update the timestamp only every few seconds): carry the last reading on at the nominal
+        // rate rather than report it as it is, which put playback a whole burst (~90 ms) back
+        // every few seconds - an audible stutter.
+        val fitted = fittedPosition(nowUs)
+            ?: (presented + sampleRate * (nowUs - atUs).coerceAtLeast(0L) / 1_000_000).also { stats.noFit++ }
         // Never further than a burst ahead of what the track reported, so a real stall (underrun)
         // still shows. The report is from [atUs], often 100+ ms ago on Bluetooth: the limit moves
         // on from there at the nominal rate. (Capping at the bare report held the estimate back
@@ -206,12 +220,30 @@ class SendspinAudioOutput {
         val sinceUs = (nowUs - atUs).coerceAtLeast(0L)
         val limit = presented + sampleRate * (sinceUs + MAX_LEAD_MS * 1000) / 1_000_000
         val estimated = minOf(fitted, limit)
+        stats.maybeLog(readings.size)
         val delta = estimated - lastPresented
         if (delta <= 0) return null
         lastPresented = estimated
         EchoReference.release(delta)
         Played(delta, nowUs)
     }
+
+    // How the playback estimate is doing, logged once a minute while playing (to tell, on a new
+    // device, whether its timestamps are missing, sparse or bursty).
+    private class Stats {
+        var polls = 0
+        var noStamp = 0
+        var noFit = 0
+        var clears = 0
+        private var since = System.currentTimeMillis()
+        fun maybeLog(readings: Int) {
+            val now = System.currentTimeMillis()
+            if (now - since < 60_000) return
+            Timber.i("Sendspin timing: $polls polls, $noStamp without timestamp, $noFit without a line, $clears restarts, $readings readings in window")
+            polls = 0; noStamp = 0; noFit = 0; clears = 0; since = now
+        }
+    }
+    private val stats = Stats()
 
     // Distinct (time µs, presented frames) readings of the last FIT_WINDOW_US, for fittedPosition.
     private val readings = ArrayDeque<LongArray>()
@@ -221,7 +253,10 @@ class SendspinAudioOutput {
         if (last != null && last[0] == atUs && last[1] == frames) return
         // A jump far off the line (flush, route change): start over.
         val predicted = fittedPosition(atUs)
-        if (predicted != null && kotlin.math.abs(predicted - frames) > sampleRate * JUMP_MS / 1000) readings.clear()
+        if (predicted != null && kotlin.math.abs(predicted - frames) > sampleRate * JUMP_MS / 1000) {
+            readings.clear()
+            stats.clears++
+        }
         readings.addLast(longArrayOf(atUs, frames))
         while (readings.size > 2 && atUs - readings.first()[0] > FIT_WINDOW_US) readings.removeFirst()
     }
@@ -318,8 +353,9 @@ class SendspinAudioOutput {
     companion object {
         private const val BUFFER_FLOOR_MS = 250
         // Readings the playback line is fitted over, how many it needs, and the jump that resets it.
-        private const val FIT_WINDOW_US = 3_000_000L
-        private const val MIN_FIT_READINGS = 8
+        // Long enough for a line even where the timestamp moves only every couple of seconds.
+        private const val FIT_WINDOW_US = 8_000_000L
+        private const val MIN_FIT_READINGS = 4
         private const val JUMP_MS = 400L
         private const val MAX_LEAD_MS = 150L
         private const val IDLE_WAIT_MS = 10
