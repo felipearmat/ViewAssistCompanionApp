@@ -38,6 +38,9 @@ class WyomingCapabilitiesBuilder @Inject constructor(private val deviceManager: 
             // A dedicated satellite whose app is device owner: HA can update it silently
             // (install_update) and release it (release_device_owner).
             put("device_owner", com.msp1974.vacompanion.device.ManagedDevice.isOwner(deviceManager.context))
+            // The exact build (versionCode), so HA can confirm an update installed and roll back
+            // if not: every build of this fork shares the version name.
+            put("app_build", com.msp1974.vacompanion.BuildConfig.VERSION_CODE)
             putJsonArray("alarms") {
                 availableAlarms.forEach { alarm ->
                     add(buildJsonObject {
