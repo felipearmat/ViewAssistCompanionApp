@@ -1167,9 +1167,29 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         if (com.msp1974.vacompanion.utils.PlayerHost.state != com.msp1974.vacompanion.utils.PlayerHost.State.OFF) {
             sendPlayerStatus()
         }
+        sendBtBattery()
     }
 
     @Volatile private var lastPlayerPlayingSent: Boolean? = null
+
+    // Battery of the connected Bluetooth speaker as Android knows it (often unknown for speakers).
+    private val btBattery by lazy { com.msp1974.vacompanion.audio.BluetoothBattery(context) { sendBtBattery() } }
+
+    private fun sendBtBattery() {
+        runCatching {
+            val reading = btBattery.read()
+            sendStatus(buildJsonObject {
+                if (reading == null) {
+                    put("bt_battery", kotlinx.serialization.json.JsonNull)
+                } else {
+                    putJsonObject("bt_battery") {
+                        put("nome", reading.name)
+                        reading.level?.let { put("nivel", it) }
+                    }
+                }
+            })
+        }.onFailure { Timber.w("Unable to send Bluetooth battery: ${it.message}") }
+    }
 
     private fun sendPlayerStatus() {
         runCatching {
@@ -1311,6 +1331,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     suspend fun startSensorMonitor() {
         startAmbientNoise()
         btKeepAlive.start()
+        btBattery.start()
         sensorJob = scope.launch {
             deviceManager.sensors.collect { data ->
                 val data = buildJsonObject {
@@ -1373,6 +1394,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         sensorJob?.cancel()
         ambientNoiseJob?.cancel()
         btKeepAlive.stop()
+        btBattery.stop()
         stopMotionDetection()
     }
 
