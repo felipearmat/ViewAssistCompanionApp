@@ -20,11 +20,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -101,9 +103,15 @@ fun WebViewScreen (
             modifier = modifier.border(4.dp, Color.Red)
         }
 
+        // Height of the now-playing card, so the chat can end above it instead of under it.
+        var nowPlayingHeightPx by remember { mutableIntStateOf(0) }
+        val density = LocalDensity.current
+        val chatBottomRoom = if (vaUiState.sendspinOverlayEnabled && nowPlayingHeightPx > 0)
+            with(density) { nowPlayingHeightPx.toDp() } + 24.dp + 8.dp else 0.dp
+
         Box(modifier = modifier) {
             if (chatWebView != null) {
-                ChatWithDrawer(chatWebView, webView, drawerTimeoutS)
+                ChatWithDrawer(chatWebView, webView, drawerTimeoutS, bottomRoom = chatBottomRoom)
             } else {
                 WebView(webView)
             }
@@ -144,7 +152,8 @@ fun WebViewScreen (
                     .align(Alignment.BottomCenter)
                     .widthIn(min = 300.dp)
                     .fillMaxWidth(0.75f)
-                    .padding(bottom = 24.dp),
+                    .padding(bottom = 24.dp)
+                    .onSizeChanged { nowPlayingHeightPx = it.height },
             )
         }
 

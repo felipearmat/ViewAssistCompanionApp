@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.msp1974.vacompanion.ui.layouts.WebView
@@ -58,7 +59,7 @@ val CHAT_RIGHT_ROOM = HANDLE_WIDTH + EDGE_GAP
  * was left.
  */
 @Composable
-fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: Int) {
+fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: Int, bottomRoom: Dp = 0.dp) {
     val scope = rememberCoroutineScope()
     var lastTouch by remember { mutableLongStateOf(0L) }
 
@@ -92,7 +93,8 @@ fun ChatWithDrawer(chat: CustomWebView, homeAssistant: CustomWebView, timeoutS: 
         }
 
         // Room on the right so the chat isn't covered by the folded handle.
-        WebView(chat, modifier = Modifier.fillMaxSize().padding(end = CHAT_RIGHT_ROOM))
+        // ...and at the bottom while the now-playing card is showing, so the last messages stay visible.
+        WebView(chat, modifier = Modifier.fillMaxSize().padding(end = CHAT_RIGHT_ROOM, bottom = bottomRoom))
 
         Row(
             modifier = Modifier
