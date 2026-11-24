@@ -138,6 +138,11 @@ class BluetoothProxyManager(
 
             override fun onLocationStateChanged(off: Boolean) {
                 config.bluetoothProxyLocationOff = off
+                // Android delivers no BLE scan results while system Location is off. A managed
+                // satellite (device owner) turns it on by itself; the scanner re-checks shortly.
+                if (off && com.msp1974.vacompanion.device.ManagedDevice.enableLocation(context)) {
+                    Timber.i("Bluetooth proxy: system Location was off, turned it on (device owner)")
+                }
             }
         }
         if (!newServer.start(API_PORT)) {

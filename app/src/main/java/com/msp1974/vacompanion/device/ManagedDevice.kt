@@ -111,6 +111,17 @@ object ManagedDevice {
         }
     }
 
+    /**
+     * Turns system Location on (needed for BLE scans, e.g. the Bluetooth proxy). Device owner
+     * only, Android 11+; returns whether it did.
+     */
+    fun enableLocation(context: Context): Boolean {
+        if (!isOwner(context) || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return runCatching { dpm(context).setLocationEnabled(admin(context), true) }
+            .onFailure { Timber.w("Managed device: Location not turned on: ${it.message}") }
+            .isSuccess
+    }
+
     /** Gives up device ownership, so the phone is an ordinary phone again (no wipe needed). */
     fun release(context: Context): Boolean {
         if (!isOwner(context)) return false
