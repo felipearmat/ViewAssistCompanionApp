@@ -405,6 +405,20 @@ class APPConfig @Inject constructor(val context: Context) {
     // WebRTC echo cancellation with the music this device plays (Sendspin) as reference, so the
     // microphone hears less of it. Off by default; applies the next time the microphone opens.
     // Stored on the device, so it survives a restart; HA can also push it.
+    // Echo cancellation remembered per output ("type:name" -> on/off): a setting that suits the
+    // phone's speaker can cut the voice on a Bluetooth speaker (latency), and vice versa.
+    fun outputAec(key: String): Boolean? = runCatching {
+        Json.parseToJsonElement(sharedPrefs.getString("output_aec", "{}") ?: "{}").jsonObject[key]?.jsonPrimitive?.booleanOrNull
+    }.getOrNull()
+
+    fun setOutputAec(key: String, enabled: Boolean) {
+        val map = runCatching {
+            Json.parseToJsonElement(sharedPrefs.getString("output_aec", "{}") ?: "{}").jsonObject.toMutableMap()
+        }.getOrDefault(mutableMapOf())
+        map[key] = kotlinx.serialization.json.JsonPrimitive(enabled)
+        sharedPrefs.edit { putString("output_aec", kotlinx.serialization.json.JsonObject(map).toString()) }
+    }
+
     var echoCancellationEnabled: Boolean
         get() = this.sharedPrefs.getBoolean("echo_cancellation", false)
         set(value) {

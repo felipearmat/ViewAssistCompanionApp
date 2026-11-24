@@ -248,6 +248,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     Timber.d("Audio devices changed - sending capabilities")
                     sendCapabilities()
                 }
+                applyOutputAec()
                 // Connecting or removing a device can move the active input/output. Players that
                 // are already playing keep their route until told: re-route them (output_auto_switch).
                 config.eventBroadcaster.notifyEvent(Event(EVENT_AUDIO_ROUTE_CHANGED, "", ""))
@@ -1172,6 +1173,28 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     @Volatile private var lastPlayerPlayingSent: Boolean? = null
 
+    // Echo cancellation per output: the output in use ("type:name", stable across reconnects).
+    @Volatile private var currentOutputKey: String? = null
+
+    private fun outputKey(): String? {
+        val id = AudioOutputRouter.activeOutputId(context, config)
+        val device = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.id == id } ?: return null
+        return "${device.type}:${device.productName}"
+    }
+
+    /** On an output change, applies the echo cancellation last chosen for that output, if any. */
+    private fun applyOutputAec() {
+        val key = outputKey() ?: return
+        if (key == currentOutputKey) return
+        currentOutputKey = key
+        val saved = config.outputAec(key) ?: return
+        if (saved != config.echoCancellationEnabled) {
+            Timber.i("Echo cancellation ${if (saved) "on" else "off"} for output $key (as last chosen there)")
+            config.echoCancellationEnabled = saved
+            sendSetting("echo_cancellation", saved)
+        }
+    }
+
     // Battery of the connected Bluetooth speaker as Android knows it (often unknown for speakers).
     private val btBattery by lazy { com.msp1974.vacompanion.audio.BluetoothBattery(context) { sendBtBattery() } }
 
@@ -1330,6 +1353,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     suspend fun startSensorMonitor() {
         startAmbientNoise()
+        applyOutputAec()
         btKeepAlive.start()
         btBattery.start()
         sensorJob = scope.launch {
@@ -1440,6 +1464,14 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
             EVENT_LOCAL_WAKE_WORD_DISMISSED, VacaUdpBroadcast.EVENT_PIPELINE_COMPLETED ->
                 com.msp1974.vacompanion.utils.PlayerHost.duck(false, 1f)
             "playerState" -> sendPlayerStatus()
+            // Echo cancellation changed (HA, the settings screen or an output change): remember it
+            // for the output in use, and reopen the microphone (idle only) so it applies now.
+            "echoCancellationEnabled" -> {
+                currentOutputKey?.let { config.setOutputAec(it, config.echoCancellationEnabled) }
+                scope.launch {
+                    if (audioPipeline == null && !isResponding()) restartWakeWordDetection()
+                }
+            }
             // Playing started or stopped: tell HA at once, not only at the next capabilities.
             "playerNowPlaying" -> if (config.playerPlaying != lastPlayerPlayingSent) sendPlayerStatus()
             // Another device heard the user much louder and answers instead: stop this one.
