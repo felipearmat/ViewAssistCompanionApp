@@ -44,12 +44,33 @@ class BluetoothProxyManager(
     @Volatile private var configuredActive = false
     private var permissionReceiver: BroadcastReceiver? = null
 
+    // Follows the setting by itself too: the change event alone was seen not to arrive (A20,
+    // 24/11: HA turned the proxy on and nothing happened), so every 30 s the proxy is started
+    // or stopped to match bluetooth_proxy_enabled.
+    private val reconcileHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val reconcile = object : Runnable {
+        override fun run() {
+            val wanted = config.bluetoothProxyEnabled
+            if (wanted && server == null) {
+                Timber.i("Bluetooth proxy: enabled but not running, starting")
+                Thread { startProxy() }.start()
+            } else if (!wanted && server != null) {
+                Timber.i("Bluetooth proxy: disabled, stopping")
+                Thread { stopProxy() }.start()
+            }
+            reconcileHandler.postDelayed(this, RECONCILE_MS)
+        }
+    }
+
     fun start() {
         config.eventBroadcaster.addListener(this)
+        Timber.i("Bluetooth proxy: setting is ${config.bluetoothProxyEnabled}")
         if (config.bluetoothProxyEnabled) startProxy()
+        reconcileHandler.postDelayed(reconcile, RECONCILE_MS)
     }
 
     fun shutdown() {
+        reconcileHandler.removeCallbacks(reconcile)
         config.eventBroadcaster.removeListener(this)
         unregisterPermissionReceiver()
         stopProxy()
@@ -120,6 +141,7 @@ class BluetoothProxyManager(
             }
         }
         if (!newServer.start(API_PORT)) {
+            Timber.w("Bluetooth proxy: API port $API_PORT could not be opened")
             scanner?.shutdown()
             scanner = null
             gatt = null
@@ -294,5 +316,6 @@ class BluetoothProxyManager(
     companion object {
         // The standard ESPHome native API port.
         const val API_PORT = 6053
+        private const val RECONCILE_MS = 30_000L
     }
 }
