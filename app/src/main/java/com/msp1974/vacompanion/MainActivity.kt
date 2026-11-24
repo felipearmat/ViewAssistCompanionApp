@@ -460,6 +460,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     Timber.d("Satellite started -> loading URL: $url")
                     webView.loadUrl(url)
                     loadChat()
+                    com.msp1974.vacompanion.utils.PlayerHost.apply(this@MainActivity, config)
                 }
                 BroadcastSender.SATELLITE_CLIENT_UPDATED -> {
                     val webviewState = viewModel.vacaState.value.webViewPageLoadingStage
@@ -694,6 +695,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         var consumed = true
         runOnUiThread {
             if (event.eventName == "chatPath") loadChat()
+            if (event.eventName == "playerUrl" || event.eventName == "playerView") {
+                com.msp1974.vacompanion.utils.PlayerHost.apply(this@MainActivity, config)
+            }
             if (!screenOffInProgress) {
                 when (event.eventName) {
                     "screenAlwaysOn" -> {

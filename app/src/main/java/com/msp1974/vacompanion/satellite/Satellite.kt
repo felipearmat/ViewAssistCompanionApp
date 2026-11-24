@@ -1390,6 +1390,21 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     override fun onEventTriggered(event: Event) {
         when (event.eventName) {
             VacaUdpBroadcast.EVENT_NEAR_MISS_WON -> scope.launch { answerNearMiss() }
+            // The hosted music player (player_url) is lowered like Sendspin while the assistant
+            // listens or speaks, and restored when the conversation ends.
+            EVENT_LOCAL_WAKE_WORD_DETECTED ->
+                com.msp1974.vacompanion.utils.PlayerHost.duck(true, (config.duckingVolume / 50f).coerceIn(0f, 1f))
+            EVENT_LOCAL_WAKE_WORD_DISMISSED, VacaUdpBroadcast.EVENT_PIPELINE_COMPLETED ->
+                com.msp1974.vacompanion.utils.PlayerHost.duck(false, 1f)
+            "playerState" -> runCatching {
+                sendStatus(buildJsonObject {
+                    putJsonObject("player") {
+                        put("state", event.newValue.toString())
+                        com.msp1974.vacompanion.utils.PlayerHost.lastError?.let { put("error", it) }
+                        put("playing", config.playerPlaying)
+                    }
+                })
+            }
             // Another device heard the user much louder and answers instead: stop this one.
             VacaUdpBroadcast.EVENT_TAKEN_OVER -> scope.launch {
                 audioPipeline?.stop()

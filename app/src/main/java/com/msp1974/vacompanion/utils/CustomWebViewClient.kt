@@ -241,7 +241,10 @@ class CustomWebViewClient(val viewModel: VAViewModel): WebViewClientCompat()  {
         url: String,
         isReload: Boolean,
     ) {
-        config.currentPath = URL(url).path
+        // Path with its query (HA pages use it, e.g. ?r=), minus the app's own external_auth.
+        val parsed = URL(url)
+        val query = parsed.query?.split('&')?.filterNot { it.startsWith("external_auth=") }?.joinToString("&").orEmpty()
+        config.currentPath = parsed.path + if (query.isNotEmpty()) "?$query" else ""
     }
 
 }

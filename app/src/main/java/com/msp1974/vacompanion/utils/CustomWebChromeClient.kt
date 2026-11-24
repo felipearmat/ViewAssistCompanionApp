@@ -7,6 +7,14 @@ import android.webkit.WebChromeClient
 import androidx.core.app.ActivityCompat
 
 class CustomWebChromeClient(private val context: Context) : WebChromeClient() {
+    // Page console messages to logcat (tag WebConsole), for testing pages; never the URL's
+    // query or fragment, which may carry tokens.
+    override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+        val source = message.sourceId().substringBefore('#').substringBefore('?')
+        timber.log.Timber.tag("WebConsole").i("${message.messageLevel()} $source:${message.lineNumber()} ${message.message()}")
+        return true
+    }
+
     override fun onPermissionRequest(request: PermissionRequest?) {
         val alreadyGranted = ArrayList<String>()
         val toBeGranted = ArrayList<String>()

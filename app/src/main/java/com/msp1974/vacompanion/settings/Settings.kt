@@ -370,7 +370,20 @@ class APPConfig @Inject constructor(val context: Context) {
     // Whether this device is playing music right now (Sendspin stream or the music player).
     @Volatile var sendspinStreaming = false
     @Volatile var musicPlayerPlaying = false
-    val musicPlaying: Boolean get() = sendspinStreaming || musicPlayerPlaying
+    // The hosted music player page (player_url, e.g. Spotify Connect) says it is playing.
+    @Volatile var playerPlaying = false
+    @Volatile var playerTitle = ""
+    val musicPlaying: Boolean get() = sendspinStreaming || musicPlayerPlaying || playerPlaying
+
+    // Music player page hosted in a hidden WebView (PlayerHost), pushed by HA; empty = off.
+    // May carry a secret in its fragment: never logged.
+    var playerUrl: String
+        get() = this.sharedPrefs.getString("player_url", "") ?: ""
+        set(value) {
+            val old = playerUrl
+            this.sharedPrefs.edit { putString("player_url", value) }
+            if (old != value) eventBroadcaster.notifyEvent(Event("playerUrl", "", ""))
+        }
 
     /** The threshold in force now: the music one while music plays (if set), else the normal one. */
     val effectiveWakeWordThreshold: Float
@@ -842,6 +855,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
         settings["arbitration_key"]?.jsonPrimitive?.contentOrNull?.let { arbitrationKey = it }
         settings["arbitration_keys"]?.jsonPrimitive?.contentOrNull?.let { arbitrationKeys = it }
+        settings["player_url"]?.jsonPrimitive?.contentOrNull?.let { playerUrl = it }
         settings["chat_path"]?.jsonPrimitive?.contentOrNull?.let { chatPath = it.trim().removePrefix("/") }
         settings["drawer_timeout"]?.jsonPrimitive?.floatOrNull?.let { drawerTimeout = it.toInt() }
         settings["level_offset_db"]?.jsonPrimitive?.floatOrNull?.let { levelOffsetDb = it }

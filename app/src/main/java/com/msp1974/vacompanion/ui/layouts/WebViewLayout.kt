@@ -18,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -108,6 +110,21 @@ fun WebViewScreen (
         val density = LocalDensity.current
         val chatBottomRoom = if (vaUiState.sendspinOverlayEnabled && nowPlayingHeightPx > 0)
             with(density) { nowPlayingHeightPx.toDp() } + 24.dp + 8.dp else 0.dp
+
+        // The hidden music player page (player_url): kept attached to the screen, 1 dp and
+        // invisible, so its audio and timers aren't throttled as a detached WebView's would be.
+        val playerView by com.msp1974.vacompanion.utils.PlayerHost.viewFlow.collectAsState()
+        playerView?.let { pv ->
+            androidx.compose.runtime.key(pv) {
+                AndroidView(
+                    modifier = Modifier.size(1.dp).alpha(0f),
+                    factory = {
+                        (pv.parent as? ViewGroup)?.removeView(pv)
+                        pv
+                    },
+                )
+            }
+        }
 
         Box(modifier = modifier) {
             if (chatWebView != null) {
