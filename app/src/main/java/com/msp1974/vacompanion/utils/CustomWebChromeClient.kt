@@ -36,6 +36,12 @@ class CustomWebChromeClient(private val context: Context) : WebChromeClient() {
                 }
             }
         }
+        // Protected (DRM) media, e.g. a music service's web player, over https only: the WebView
+        // only shows pages HA sends it, and DRM needs a secure origin anyway.
+        if (request?.resources?.contains(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID) == true &&
+            request.origin?.scheme == "https") {
+            alreadyGranted.add(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)
+        }
         if (alreadyGranted.isNotEmpty()) {
             request?.grant(alreadyGranted.toTypedArray())
         }

@@ -1066,7 +1066,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     handleAlarmAction(payload["activate"]?.jsonPrimitive?.booleanOrNull ?: false)
                 }
                 "navigate" -> if (payloadStr.isNotEmpty()) {
-                    val url = Json.parseToJsonElement(payloadStr).jsonObject["url"]?.jsonPrimitive?.content ?: ""
+                    // "url" (a full URL or a path in HA), or "path" as some callers send it.
+                    val p = Json.parseToJsonElement(payloadStr).jsonObject
+                    val url = (p["url"] ?: p["path"])?.jsonPrimitive?.content ?: ""
                     if (url.isNotEmpty()) config.eventBroadcaster.notifyEvent(Event("navigate", "", url))
                 }
             }

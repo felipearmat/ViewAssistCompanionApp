@@ -186,16 +186,18 @@ class CustomWebView @JvmOverloads constructor(
 
     val externalAuthCallback = object : ExternalAuthCallback {
         override fun onRequestExternalAuth(view: WebView, payload: String) {
-            if (deviceManager.networkStatus.value.status == NetworkStatus.Available) {
-                val json = Json { ignoreUnknownKeys = true }
-                val payloadJson = json.parseToJsonElement(payload).jsonObject
-                val forceRefresh = payloadJson["force"]?.jsonPrimitive?.boolean ?: false
-                scope.launch {
-                    requestAuthorisation(forceRefresh, view)
-                }
-            } else {
-                Timber.w("Requested authentication with HA while network was unavailable")
-                reAuthRequired = true
+            // The frontend asking for a token was itself just loaded over the network, so answer
+            // it whatever the network monitor says: postponing left the page on HA's "Unable to
+            // connect / Retry now" screen until the app restarted (A20, 23/11) when the monitor
+            // was stale. A failed request is reported to the frontend, which retries.
+            if (deviceManager.networkStatus.value.status != NetworkStatus.Available) {
+                Timber.w("Authentication requested while the network monitor says unavailable; trying anyway")
+            }
+            val json = Json { ignoreUnknownKeys = true }
+            val payloadJson = json.parseToJsonElement(payload).jsonObject
+            val forceRefresh = payloadJson["force"]?.jsonPrimitive?.boolean ?: false
+            scope.launch {
+                requestAuthorisation(forceRefresh, view)
             }
         }
         override fun onRequestRevokeExternalAuth(view: WebView) {
