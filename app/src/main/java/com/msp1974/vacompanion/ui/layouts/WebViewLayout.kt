@@ -163,8 +163,10 @@ fun WebViewScreen (
         // Never so narrow that the track details and controls don't fit.
         if (vaUiState.sendspinOverlayEnabled) {
             NowPlayingOverlay(
-                nowPlaying = vaUiState.sendspinNowPlaying,
-                onCommand = { vaViewModel.onSendspinCommand(it) },
+                // Sendspin's track, or the hosted player's (Spotify) when Sendspin isn't playing.
+                nowPlaying = if (!vaUiState.sendspinNowPlaying.active && vaUiState.playerNowPlaying.active)
+                    vaUiState.playerNowPlaying else vaUiState.sendspinNowPlaying,
+                onCommand = { vaViewModel.onNowPlayingCommand(it) },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .widthIn(min = 300.dp)

@@ -170,7 +170,9 @@ data class State(
     var showRtspStreamingIndicator: Boolean = true,
     var audioOutputId: Int = -1,
     var sendspinOverlayEnabled: Boolean = true,
-    var sendspinNowPlaying: SendspinNowPlaying = SendspinNowPlaying()
+    var sendspinNowPlaying: SendspinNowPlaying = SendspinNowPlaying(),
+    // The hosted music player's (player_url, e.g. Spotify) track, for the same card.
+    var playerNowPlaying: SendspinNowPlaying = SendspinNowPlaying()
     )
 
 @HiltViewModel
@@ -337,6 +339,10 @@ class VAViewModel @Inject constructor(
                     currentState.copy(sendspinOverlayEnabled = config.sendspinOverlayEnabled)
                 }
             }
+            "playerNowPlaying" -> {
+                val nowPlaying = event.newValue as? SendspinNowPlaying ?: SendspinNowPlaying()
+                _vacaState.update { currentState -> currentState.copy(playerNowPlaying = nowPlaying) }
+            }
             "sendspinNowPlaying" -> {
                 val nowPlaying = event.newValue as? SendspinNowPlaying ?: SendspinNowPlaying()
                 _vacaState.update { currentState ->
@@ -502,6 +508,15 @@ class VAViewModel @Inject constructor(
     /** A transport button on the now-playing overlay: "play", "pause", "next" or "previous". */
     fun onSendspinCommand(command: String) {
         config.eventBroadcaster.notifyEvent(Event("sendspinCommand", "", command))
+    }
+
+    /** A card button while the card shows the hosted player's track (Sendspin not active). */
+    fun onNowPlayingCommand(command: String) {
+        if (!_vacaState.value.sendspinNowPlaying.active && _vacaState.value.playerNowPlaying.active) {
+            com.msp1974.vacompanion.utils.PlayerHost.command(command)
+        } else {
+            onSendspinCommand(command)
+        }
     }
 
     fun onToggleMute(muted: Boolean) {

@@ -14,6 +14,7 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.msp1974.vacompanion.sendspin.SendspinNowPlaying
 import com.msp1974.vacompanion.settings.APPConfig
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
@@ -114,6 +115,19 @@ object PlayerHost {
         config?.eventBroadcaster?.notifyEvent(Event("playerState", "", new.name.lowercase()))
     }
 
+    /** Now-playing card button: "play"/"pause", "next", "previous" -> the page's VacaPlayerCmd. */
+    fun command(command: String) {
+        val action = when (command) {
+            "play", "pause" -> "tocar_pausar"
+            "next" -> "proxima"
+            "previous" -> "anterior"
+            else -> return
+        }
+        main.post {
+            view?.evaluateJavascript("window.VacaPlayerCmd && window.VacaPlayerCmd('$action', null)", null)
+        }
+    }
+
     /** Lowers (true) or restores the player's own volume while the assistant listens or speaks. */
     fun duck(on: Boolean, level: Float) {
         main.post {
@@ -178,12 +192,26 @@ object PlayerHost {
         fun estado(json: String) {
             runCatching {
                 val p = Json.parseToJsonElement(json).jsonObject
+                fun text(key: String) = p[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+                fun number(key: String) = p[key]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toLong() ?: 0L
                 val playing = p["tocando"]?.jsonPrimitive?.booleanOrNull ?: false
                 config?.playerPlaying = playing
-                config?.playerTitle = listOfNotNull(
-                    p["artista"]?.jsonPrimitive?.contentOrNull,
-                    p["titulo"]?.jsonPrimitive?.contentOrNull,
-                ).joinToString(" - ")
+                config?.playerTitle = listOf(text("artista"), text("titulo")).filter { it.isNotEmpty() }.joinToString(" - ")
+                // The same now-playing card as Sendspin's: shown while a track is loaded (also
+                // paused, to resume it), gone when the page reports no title.
+                val nowPlaying = SendspinNowPlaying(
+                    title = text("titulo"),
+                    artist = text("artista"),
+                    album = text("album"),
+                    artworkUrl = text("capa").ifEmpty { null },
+                    durationMs = number("duracao_ms"),
+                    positionMs = number("posicao_ms"),
+                    positionAtMs = android.os.SystemClock.elapsedRealtime(),
+                    active = text("titulo").isNotEmpty() || text("artista").isNotEmpty(),
+                    playing = playing,
+                    commands = setOf(if (playing) "pause" else "play", "next", "previous"),
+                )
+                config?.eventBroadcaster?.notifyEvent(Event("playerNowPlaying", "", nowPlaying))
             }.onFailure { Timber.w("Player: bad estado(): ${it.message}") }
         }
     }
