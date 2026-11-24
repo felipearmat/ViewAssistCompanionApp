@@ -1162,6 +1162,27 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     private fun handleCapabilities(clientId: String) {
         val capabilitiesBuilder = WyomingCapabilitiesBuilder(deviceManager)
         sendSatelliteMessage(clientId,"capabilities", capabilitiesBuilder.buildInfo())
+        // HA asks for capabilities every ~30 s and after it reconnects: the player's state goes
+        // with them, so HA never acts on a stale "player off" (e.g. after an HA restart).
+        if (com.msp1974.vacompanion.utils.PlayerHost.state != com.msp1974.vacompanion.utils.PlayerHost.State.OFF) {
+            sendPlayerStatus()
+        }
+    }
+
+    @Volatile private var lastPlayerPlayingSent: Boolean? = null
+
+    private fun sendPlayerStatus() {
+        runCatching {
+            val playing = config.playerPlaying
+            sendStatus(buildJsonObject {
+                putJsonObject("player") {
+                    put("state", com.msp1974.vacompanion.utils.PlayerHost.state.name.lowercase())
+                    com.msp1974.vacompanion.utils.PlayerHost.lastError?.let { put("error", it) }
+                    put("playing", playing)
+                }
+            })
+            lastPlayerPlayingSent = playing
+        }
     }
 
     // *************************************************************************
@@ -1396,15 +1417,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 com.msp1974.vacompanion.utils.PlayerHost.duck(true, (config.duckingVolume / 50f).coerceIn(0f, 1f))
             EVENT_LOCAL_WAKE_WORD_DISMISSED, VacaUdpBroadcast.EVENT_PIPELINE_COMPLETED ->
                 com.msp1974.vacompanion.utils.PlayerHost.duck(false, 1f)
-            "playerState" -> runCatching {
-                sendStatus(buildJsonObject {
-                    putJsonObject("player") {
-                        put("state", event.newValue.toString())
-                        com.msp1974.vacompanion.utils.PlayerHost.lastError?.let { put("error", it) }
-                        put("playing", config.playerPlaying)
-                    }
-                })
-            }
+            "playerState" -> sendPlayerStatus()
+            // Playing started or stopped: tell HA at once, not only at the next capabilities.
+            "playerNowPlaying" -> if (config.playerPlaying != lastPlayerPlayingSent) sendPlayerStatus()
             // Another device heard the user much louder and answers instead: stop this one.
             VacaUdpBroadcast.EVENT_TAKEN_OVER -> scope.launch {
                 audioPipeline?.stop()
