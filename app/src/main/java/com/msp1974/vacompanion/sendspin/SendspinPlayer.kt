@@ -170,6 +170,7 @@ class SendspinPlayer(
     }
 
     fun destroy() {
+        mainHandler.removeCallbacks(stallCheck)
         if (!destroyed.compareAndSet(false, true)) return
         config.eventBroadcaster.removeListener(this)
         feedbackThread?.interrupt()
@@ -213,11 +214,51 @@ class SendspinPlayer(
 
     // ---- NativeSendspinCallbacks ---------------------------------------------------------
 
-    override fun onAudioWrite(buffer: ByteBuffer, length: Int, timeoutMs: Int): Int =
-        output.write(buffer, length, timeoutMs)
+    override fun onAudioWrite(buffer: ByteBuffer, length: Int, timeoutMs: Int): Int {
+        lastAudioAt = SystemClock.elapsedRealtime()
+        if (stalled) resumeAfterStall()
+        return output.write(buffer, length, timeoutMs)
+    }
+
+    // A stream with no audio for STALL_MS is taken as stopped (as if the server had ended it), so
+    // a server that goes quiet without "stream end" (a lost session) doesn't leave the device
+    // "playing" (the music wake word threshold, own playback, HA's state). Audio coming back
+    // resumes it.
+    @Volatile private var lastAudioAt = 0L
+    @Volatile private var stalled = false
+    private var streamFormat: Triple<Int, Int, Int>? = null
+    private val stallCheck = object : Runnable {
+        override fun run() {
+            val active = synchronized(nowPlayingLock) { streamActive }
+            if (active && !stalled && lastAudioAt > 0 &&
+                SystemClock.elapsedRealtime() - lastAudioAt > STALL_MS) {
+                Timber.w("Sendspin: no audio for ${STALL_MS / 1000} s, treating the stream as stopped")
+                stalled = true
+                output.pause()
+                abandonAudioFocus()
+                synchronized(nowPlayingLock) { streamActive = false }
+                config.sendspinStreaming = false
+                publishNowPlaying()
+            }
+            // Only while a stream is on; the next stream start restarts the check.
+            if (synchronized(nowPlayingLock) { streamActive }) mainHandler.postDelayed(this, STALL_CHECK_MS)
+        }
+    }
+
+    private fun resumeAfterStall() {
+        stalled = false
+        val (rate, channels, bits) = streamFormat ?: return
+        Timber.i("Sendspin: audio is back, resuming the stream")
+        onStreamStart(rate, channels, bits)
+    }
 
     override fun onStreamStart(sampleRate: Int, channels: Int, bitDepth: Int) {
         Timber.d("Sendspin: stream start rate=$sampleRate channels=$channels bitDepth=$bitDepth")
+        streamFormat = Triple(sampleRate, channels, bitDepth)
+        stalled = false
+        lastAudioAt = SystemClock.elapsedRealtime()
+        mainHandler.removeCallbacks(stallCheck)
+        mainHandler.postDelayed(stallCheck, STALL_CHECK_MS)
         synchronized(nowPlayingLock) { streamActive = true }
         config.sendspinStreaming = true
         publishNowPlaying()
@@ -234,6 +275,7 @@ class SendspinPlayer(
 
     override fun onStreamEnd() {
         Timber.d("Sendspin: stream end")
+        stalled = false
         output.pause()
         abandonAudioFocus()
         synchronized(nowPlayingLock) { streamActive = false }
@@ -532,6 +574,8 @@ class SendspinPlayer(
     }
 
     companion object {
+        private const val STALL_MS = 15_000L
+        private const val STALL_CHECK_MS = 5_000L
         private const val PREFS = "sendspin_player"
         private const val PREF_VOLUME = "volume"
         private const val PREF_MUTED = "muted"
