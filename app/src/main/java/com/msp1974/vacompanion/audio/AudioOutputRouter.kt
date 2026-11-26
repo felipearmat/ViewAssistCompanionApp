@@ -43,6 +43,19 @@ object AudioOutputRouter {
         return null
     }
 
+    /** True when playback is going to a Bluetooth speaker or headset (which plays late). */
+    fun isBluetoothOutput(context: Context, config: APPConfig): Boolean {
+        val id = activeOutputId(context, config)
+        if (id < 0) return false
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val device = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.id == id }
+        return device?.type in setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+        )
+    }
+
     fun activeOutputId(context: Context, config: APPConfig): Int {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)

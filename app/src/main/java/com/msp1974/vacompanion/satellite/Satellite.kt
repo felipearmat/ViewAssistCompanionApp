@@ -175,16 +175,22 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         state = SatelliteState.STARTING
         config.eventBroadcaster.addListener(this)
 
-        val loadedSettings = waitForSettings()
-        if (!loadedSettings) {
-            // Try 1 more time in case of timing issue
+        // Right after HA (re)starts or reloads, its settings can take a minute to come. Giving up
+        // early left the satellite stopped - deaf - until the app was restarted, so ask again a
+        // few times, waiting longer each time.
+        var loadedSettings = waitForSettings()
+        var attempt = 1
+        while (!loadedSettings && attempt < SATELLITE_START_ATTEMPTS) {
+            attempt++
+            Timber.w("Satellite start: no settings yet, asking again ($attempt/$SATELLITE_START_ATTEMPTS)")
             sendSatelliteMessage(clientId, WyomingEvent.CUSTOM_EVENT, buildJsonObject {
                 put(EVENT_TYPE, WyomingCustomEventType.SETTINGS)
             })
-            if (!waitForSettings(5000)) {
-                state = SatelliteState.ERROR
-                return
-            }
+            loadedSettings = waitForSettings(SETTINGS_WAIT_MS)
+        }
+        if (!loadedSettings) {
+            state = SatelliteState.ERROR
+            return
         }
 
         // Verify app version
@@ -943,6 +949,11 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                             while (mediaManager.voicePlayer.isRunning()) {
                                 delay(10.milliseconds)
                             }
+                            // A Bluetooth speaker is still playing the end of the reply when the
+                            // player here finishes; opening the mic now would record it.
+                            if (AudioOutputRouter.isBluetoothOutput(context, config)) {
+                                delay(BLUETOOTH_TAIL_MS.milliseconds)
+                            }
                             startAudioPipeline(PipelineStartMode.CONTINUE_CONVERSATION)
                         }
                         return
@@ -1520,6 +1531,12 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     companion object {
         const val WAKE_WORD_CLIP_EVENT_TYPE = "wake_word_clip"
+        // How late a Bluetooth speaker plays (A2DP buffering): wait this long after the reply
+        // ends before listening again in a continued conversation.
+        const val BLUETOOTH_TAIL_MS = 400L
+        // Settings from HA right after connecting: waits before giving up, and start attempts.
+        const val SETTINGS_WAIT_MS = 30_000L
+        const val SATELLITE_START_ATTEMPTS = 3
         // Near misses at or above this score also send their audio (when wake_word_clips is on).
         const val NEAR_MISS_CLIP_MIN_SCORE = 0.3f
         const val EVENT_LOCAL_WAKE_WORD_DETECTED = "localWakeWordDetected"

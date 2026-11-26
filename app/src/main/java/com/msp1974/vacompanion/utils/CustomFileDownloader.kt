@@ -203,7 +203,11 @@ class CustomFileDownloader(private val context: Context, val deviceManager: Devi
                 val contentLength = response.contentLength() ?: -1L
                 val channel = response.bodyAsChannel()
                 
-                FileOutputStream(targetFile).use { output ->
+                // Written aside and renamed into place at the end: an update may replace a model
+                // that is loaded (a mapped file must not be truncated), and a failed download
+                // must not leave half a file behind.
+                val partFile = File(targetDir.toString(), "${fileName.lowercase()}.part")
+                FileOutputStream(partFile).use { output ->
                     val buffer = ByteArray(8192)
                     var totalBytesRead: Long = 0
                     
@@ -220,6 +224,11 @@ class CustomFileDownloader(private val context: Context, val deviceManager: Devi
                     }
                 }
                 
+                if (!partFile.renameTo(targetFile)) {
+                    partFile.delete()
+                    emit(DownloadStatus.Error(fileName, "Could not move the download into place"))
+                    return@execute
+                }
                 Timber.d("Successfully downloaded $fileName to $targetFile")
                 emit(DownloadStatus.Success(fileName, targetFile.toString()))
             }
@@ -237,6 +246,16 @@ class CustomFileDownloader(private val context: Context, val deviceManager: Devi
             type.toString().lowercase()
         }", fileName)
         return if (file.exists()) file else null
+    }
+
+    /**
+     * True when the downloaded [fileName] is older than [remoteTimestamp] (seconds, the file's
+     * modification time in HA's custom_files): HA has a newer file under the same name.
+     */
+    fun wakeWordFileOutdated(type: WakeWordType, fileName: String, remoteTimestamp: Long?): Boolean {
+        if (remoteTimestamp == null || remoteTimestamp <= 0) return false
+        val file = getDownloadedWakeWordFile(type, fileName.lowercase()) ?: return false
+        return file.lastModified() / 1000 < remoteTimestamp
     }
 
     fun wakeWordFileExists(type: WakeWordType, fileName: String): Boolean {

@@ -49,6 +49,8 @@ class SatelliteCustomFilesHandler(
 
             for ((name, entryConfig) in wakeWordEntries) {
                 val configExtensions = entryConfig?.get("extensions")?.jsonArray?.map { it.jsonPrimitive.content }
+                // HA's file time: a newer file under the same name is downloaded again.
+                val remoteTimestamp = entryConfig?.get("timestamp")?.jsonPrimitive?.longOrNull
                 
                 val extensions = configExtensions ?: when (wakeWordModelType) {
                     WakeWordType.MICROWAKEWORD -> listOf("json", "tflite")
@@ -59,7 +61,8 @@ class SatelliteCustomFilesHandler(
                 if (wakeWordModelType == WakeWordType.OPENWAKEWORD || wakeWordModelType == WakeWordType.OPENWAKEWORD_RT) {
                     val missingExtensions = mutableListOf<String>()
                     for (ext in extensions) {
-                        if (force || !customFileDownloader.wakeWordFileExists(wakeWordModelType, "$name.$ext")) {
+                        if (force || !customFileDownloader.wakeWordFileExists(wakeWordModelType, "$name.$ext") ||
+                            customFileDownloader.wakeWordFileOutdated(wakeWordModelType, "$name.$ext", remoteTimestamp)) {
                             missingExtensions.add(ext)
                         }
                     }
@@ -81,7 +84,8 @@ class SatelliteCustomFilesHandler(
                     var downloadNeeded = force
                     if (!downloadNeeded) {
                         for (ext in extensions) {
-                            if (!customFileDownloader.wakeWordFileExists(wakeWordModelType, "$name.$ext")) {
+                            if (!customFileDownloader.wakeWordFileExists(wakeWordModelType, "$name.$ext") ||
+                                customFileDownloader.wakeWordFileOutdated(wakeWordModelType, "$name.$ext", remoteTimestamp)) {
                                 downloadNeeded = true
                                 break
                             }
