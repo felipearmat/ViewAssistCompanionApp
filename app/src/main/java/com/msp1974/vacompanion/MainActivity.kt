@@ -35,6 +35,7 @@ import androidx.camera.core.ExperimentalMirrorMode
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -42,9 +43,13 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.Color
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -74,6 +79,7 @@ import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers
 import com.msp1974.vacompanion.utils.Permissions
+import com.msp1974.vacompanion.utils.PlayerHost
 import com.msp1974.vacompanion.utils.SoundControl
 import com.msp1974.vacompanion.utils.Updater
 import dagger.hilt.android.AndroidEntryPoint
@@ -205,6 +211,23 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                                 Box(modifier = Modifier.padding(padding)) {
                                     ConnectionScreen()
                                 }
+                            }
+                        }
+
+                        // The hidden music player page (player_url): attached here, outside the
+                        // screen states above, so it keeps playing with the screen blanked or
+                        // while reconnecting; 1 dp and invisible, so it isn't throttled as a
+                        // detached WebView would be.
+                        val playerView by PlayerHost.viewFlow.collectAsState()
+                        playerView?.let { pv ->
+                            key(pv) {
+                                AndroidView(
+                                    modifier = Modifier.size(1.dp).alpha(0f),
+                                    factory = {
+                                        (pv.parent as? ViewGroup)?.removeView(pv)
+                                        pv
+                                    },
+                                )
                             }
                         }
 
@@ -585,8 +608,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         // Stop any WebView processing (including in-page video/WebRTC decode) while not visible,
         // rather than relying on the view merely being detached from the window.
         if (::webView.isInitialized) {
-            webView.onPause()
-            webView.pauseTimers()
+            // Keeps timers running while the music player page is active (they are process-wide).
+            PlayerHost.pauseHidden(webView)
         }
         super.onPause()
     }

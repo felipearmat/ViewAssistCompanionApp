@@ -53,6 +53,28 @@ object PlayerHost {
     private var retryMs = 5_000L
     private val reload = Runnable { load() }
 
+    /** A page still loading after this long is stuck (e.g. WebView timers left paused). */
+    private const val LOADING_TIMEOUT_MS = 30_000L
+    private val loadingWatchdog = Runnable {
+        if (state == State.LOADING) {
+            // Timers are process-wide: if they were left paused, nothing in the page can run.
+            view?.resumeTimers()
+            scheduleReload("still loading after ${LOADING_TIMEOUT_MS / 1000} s")
+        }
+    }
+
+    /** True while a player page is wanted: its WebView must keep running. */
+    val isActive: Boolean get() = url.isNotEmpty() && state != State.OFF
+
+    /**
+     * Pauses [webView] while it is not visible. WebView.pauseTimers() is process-wide - it would
+     * freeze the player page too - so the timers are only paused when no player is active.
+     */
+    fun pauseHidden(webView: WebView) {
+        webView.onPause()
+        if (!isActive) webView.pauseTimers()
+    }
+
     @Volatile var state = State.OFF
         private set
     @Volatile var lastError: String? = null
@@ -89,10 +111,16 @@ object PlayerHost {
         val v = view ?: create(context).also { view = it }
         Timber.i("Player: loading ${safe(url)}")
         setState(State.LOADING, null)
+        // Another WebView may have paused the (process-wide) timers before a player existed.
+        v.resumeTimers()
+        v.onResume()
         v.loadUrl(url)
+        main.removeCallbacks(loadingWatchdog)
+        main.postDelayed(loadingWatchdog, LOADING_TIMEOUT_MS)
     }
 
     private fun destroy() {
+        main.removeCallbacks(loadingWatchdog)
         view?.let {
             (it.parent as? android.view.ViewGroup)?.removeView(it)
             it.destroy()

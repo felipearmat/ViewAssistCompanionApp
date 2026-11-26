@@ -63,13 +63,13 @@ fun WebViewScreen (
     // WebViewScreen is only ever composed while the dashboard should actually be visible (see
     // MainActivity's screenBlank/satelliteRunning when-block) - use that composition lifecycle to
     // stop any WebView processing (including in-page video/WebRTC decode) as soon as it isn't,
-    // rather than relying on the view merely being detached from the window.
+    // rather than relying on the view merely being detached from the window. Timers are
+    // process-wide, so they stay running while the music player page is active (PlayerHost).
     DisposableEffect(webView) {
         webView.onResume()
         webView.resumeTimers()
         onDispose {
-            webView.onPause()
-            webView.pauseTimers()
+            com.msp1974.vacompanion.utils.PlayerHost.pauseHidden(webView)
         }
     }
 
@@ -110,21 +110,6 @@ fun WebViewScreen (
         val density = LocalDensity.current
         val chatBottomRoom = if (vaUiState.sendspinOverlayEnabled && nowPlayingHeightPx > 0)
             with(density) { nowPlayingHeightPx.toDp() } + 24.dp + 8.dp else 0.dp
-
-        // The hidden music player page (player_url): kept attached to the screen, 1 dp and
-        // invisible, so its audio and timers aren't throttled as a detached WebView's would be.
-        val playerView by com.msp1974.vacompanion.utils.PlayerHost.viewFlow.collectAsState()
-        playerView?.let { pv ->
-            androidx.compose.runtime.key(pv) {
-                AndroidView(
-                    modifier = Modifier.size(1.dp).alpha(0f),
-                    factory = {
-                        (pv.parent as? ViewGroup)?.removeView(pv)
-                        pv
-                    },
-                )
-            }
-        }
 
         Box(modifier = modifier) {
             if (chatWebView != null) {
