@@ -595,6 +595,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
     // Until when a wake word heard while responding must not interrupt (no_barge_in action).
     @Volatile private var noBargeInUntil = 0L
 
+    // A continued conversation closed by HA audio before any speech is reopened only once in a row.
+    @Volatile private var reopenedAfterHaAudio = false
+
     /** True while a pipeline is genuinely in progress: started, and neither ended nor stuck. */
     fun isResponding(): Boolean {
         val pipeline = audioPipeline ?: return false
@@ -954,6 +957,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
             override fun onFinish(reason: PipelineEndReason, continueConversation: Boolean) {
                 Timber.i("Pipeline ended.  Restarting: $continueConversation")
+                if (!closedBeforeSpeech) reopenedAfterHaAudio = false
                 cancelDetectionBuffer()
                 mediaManager.thinkingPlayer.stop()
                 wakeClips.finish(pipelineId, wakeClips.outcomeFor(reason, pipelineId))
@@ -977,6 +981,26 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                                 delay(BLUETOOTH_TAIL_MS.milliseconds)
                             }
                             startAudioPipeline(PipelineStartMode.CONTINUE_CONVERSATION)
+                        }
+                        return
+                    } else if (closedBeforeSpeech && !reopenedAfterHaAudio) {
+                        // Audio from HA ended a continued conversation before the person could
+                        // answer: listen again, once, unless HA (or a wake word) has meanwhile
+                        // started another pipeline.
+                        reopenedAfterHaAudio = true
+                        val ended = this
+                        scope.launch {
+                            while (mediaManager.voicePlayer.isRunning()) {
+                                delay(10.milliseconds)
+                            }
+                            if (AudioOutputRouter.isBluetoothOutput(context, config)) {
+                                delay(BLUETOOTH_TAIL_MS.milliseconds)
+                            }
+                            delay(REOPEN_GRACE_MS.milliseconds)
+                            if (audioPipeline === ended) {
+                                Timber.i("Listening again: HA audio closed the conversation before any speech")
+                                startAudioPipeline(PipelineStartMode.CONTINUE_CONVERSATION)
+                            }
                         }
                         return
                     } else {
@@ -1573,6 +1597,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         const val SATELLITE_START_ATTEMPTS = 3
         // Longest window HA can ask for in which the assistant's speech isn't interrupted.
         const val NO_BARGE_IN_MAX_SECONDS = 120
+        // Pause before listening again after HA audio closed a conversation, so that HA, if it is
+        // itself asking to listen, goes first.
+        const val REOPEN_GRACE_MS = 700L
         // Near misses at or above this score also send their audio (when wake_word_clips is on).
         const val NEAR_MISS_CLIP_MIN_SCORE = 0.3f
         const val EVENT_LOCAL_WAKE_WORD_DETECTED = "localWakeWordDetected"

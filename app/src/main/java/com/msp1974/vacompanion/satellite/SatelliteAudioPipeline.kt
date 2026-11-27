@@ -95,6 +95,9 @@ abstract class SatelliteAudioPipeline(
         // From the start of the pipeline until the reply starts playing. Speech, a slow
         // transcription and a slow (e.g. cloud) agent can together take well over 20 s.
         const val PIPELINE_TIMEOUT_SECONDS = 75
+        // Seconds to start speaking when listening wasn't started by a wake word (a continued
+        // conversation, or HA asking): longer than after a wake word, when speech is already coming.
+        const val REPLY_START_SECONDS = 10
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -192,7 +195,12 @@ abstract class SatelliteAudioPipeline(
         return when(pipelineStage) {
             PipelineStage.STARTED -> timeInStage >  5
             // Once the device has heard speech itself, give it as long as HA gives speech.
-            PipelineStage.LISTENING -> timeInStage > if (config.localEndOfSpeech && isContinuation && endOfSpeech.speechSeen) 20 else 5
+            PipelineStage.LISTENING -> timeInStage > when {
+                config.localEndOfSpeech && isContinuation && endOfSpeech.speechSeen -> 20
+                // Not started by a wake word: the person may still be getting ready to answer.
+                isContinuation || pipelineStartMode == PipelineStartMode.REQUESTED_BY_SERVER -> REPLY_START_SECONDS
+                else -> 5
+            }
             PipelineStage.VOICE_STARTED -> timeInStage > 20
             PipelineStage.AWAITING_TTS -> timeInStage > 5
             else -> false
@@ -372,8 +380,18 @@ abstract class SatelliteAudioPipeline(
         } catch (_: Exception) {
             return
         }
+        // Audio from HA while a continued conversation still waits for the first word (e.g. HA
+        // forcing the listening open again): this listening ends without having heard anything.
+        if (isContinuation && pipelineStage == PipelineStage.LISTENING) {
+            Timber.w("Pipeline [$pipelineId] got audio from HA before any speech")
+            closedBeforeSpeech = true
+        }
         pipelineStage = PipelineStage.STARTING_TTS
     }
+
+    /** True when HA sent audio that ended this continued conversation before anyone spoke. */
+    @Volatile var closedBeforeSpeech = false
+        private set
 
     internal fun handleAudioChunk(event: WyomingPacket) {
         if (pipelineStage == PipelineStage.STARTING_TTS) pipelineStage = PipelineStage.STREAMING_TTS
