@@ -50,6 +50,7 @@ abstract class WyomingTCPServer(private val context: Context, val deviceManager:
     private val scope = CoroutineScope(Dispatchers.IO + job)
     private var satelliteStatusListenerJob: Job? = null
     private var pauseSatelliteTimeoutJob: Job? = null
+    private var errorRecoveryJob: Job? = null
     private var disconnectionMonitorJob: Job? = null
 
     private var runServer: Boolean = true
@@ -439,13 +440,33 @@ abstract class WyomingTCPServer(private val context: Context, val deviceManager:
                 // field read here could race it and (rarely) observe the previous satellite
                 // or null, leaving WyomingServerStatus.satelliteRunning stuck stale.
                 satelliteStatusListenerJob = scope.launch {
-                    newSatellite.satelliteState.collect { _ ->
+                    newSatellite.satelliteState.collect { state ->
                         updateStatus()
+                        if (state == SatelliteState.ERROR) scheduleErrorRecovery(newSatellite)
                     }
                 }
             }
         } catch (e: Exception) {
             Timber.e("Error starting satellite: $e")
+        }
+    }
+
+    /**
+     * A satellite that failed to start (e.g. HA's settings never came) stays in ERROR while HA
+     * keeps its connection open and believes it is running, so HA never sends run-satellite
+     * again and the device stays deaf until the app is restarted. Instead, drop it after a short
+     * pause: closing HA's connection makes HA reconnect and send run-satellite, which starts a
+     * fresh satellite.
+     */
+    private fun scheduleErrorRecovery(failed: Satellite) {
+        errorRecoveryJob?.cancel()
+        errorRecoveryJob = scope.launch {
+            delay(ERROR_RECOVERY_DELAY_SECS.seconds)
+            if (satellite === failed && failed.state == SatelliteState.ERROR) {
+                Timber.w("Satellite failed to start - dropping it so Home Assistant starts it again")
+                stopSatellite()
+                updateStatus()
+            }
         }
     }
 
@@ -502,5 +523,7 @@ abstract class WyomingTCPServer(private val context: Context, val deviceManager:
         private val IGNORED_LOG_EVENTS = setOf("ping", "pong", "audio-chunk")
         private const val DISCONNECTION_TIMEOUT_MINS = 5
         private const val PAUSE_SATELLITE_TIMEOUT_MINS = 5
+        // Pause before a satellite that failed to start is dropped for HA to start it again.
+        private const val ERROR_RECOVERY_DELAY_SECS = 10
     }
 }
