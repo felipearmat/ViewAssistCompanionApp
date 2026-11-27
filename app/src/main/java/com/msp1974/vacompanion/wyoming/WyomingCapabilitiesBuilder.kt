@@ -59,5 +59,5 @@ val CASA_FEATURES = listOf(
     "wake_word_clips", "wake_word_threshold_music", "local_end_of_speech", "assist_indicator",
     "wake_word_detection", "wake_word_near_miss", "ambient_capture", "level_offset_db",
     "mic_source", "mic_auto_switch", "output_auto_switch", "conversation_ducking", "indicator_prompt", "chat_drawer", "ambient_noise",
-    "bt_keep_alive", "install_update", "remove_accounts", "player_url", "bt_battery", "no_barge_in", "install_update_report",
+    "bt_keep_alive", "install_update", "remove_accounts", "player_url", "bt_battery", "no_barge_in", "install_update_report", "finished_speaking_detection",
 )

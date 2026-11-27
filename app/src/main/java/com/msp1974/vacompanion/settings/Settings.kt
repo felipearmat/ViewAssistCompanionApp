@@ -354,6 +354,14 @@ class APPConfig @Inject constructor(val context: Context) {
             if (old != value) eventBroadcaster.notifyEvent(Event("localEndOfSpeech", old, value))
         }
 
+    // HA's "finished speaking detection" for this satellite (default / relaxed / aggressive):
+    // also sets how much silence ends speech in the device's own end-of-speech detection.
+    var finishedSpeakingDetection: String
+        get() = this.sharedPrefs.getString("finished_speaking_detection", "default") ?: "default"
+        set(value) {
+            this.sharedPrefs.edit { putString("finished_speaking_detection", value) }
+        }
+
     // Wake word threshold while this device plays music (0-1; 0 = use the normal threshold).
     // Music lowers the score of a real wake word, so a lower bar can be set for when it plays;
     // it is never taken below MUSIC_THRESHOLD_FLOOR. Meant to be set by a calibration that
@@ -865,6 +873,7 @@ class APPConfig @Inject constructor(val context: Context) {
         settings["echo_cancellation"]?.jsonPrimitive?.booleanOrNull?.let { echoCancellationEnabled = it }
         settings["voice_gain"]?.jsonPrimitive?.floatOrNull?.let { voiceGainDb = it.toInt() }
         settings["local_end_of_speech"]?.jsonPrimitive?.booleanOrNull?.let { localEndOfSpeech = it }
+        settings["finished_speaking_detection"]?.jsonPrimitive?.contentOrNull?.let { finishedSpeakingDetection = it }
         settings["assist_indicator"]?.jsonPrimitive?.booleanOrNull?.let { assistIndicatorEnabled = it }
         settings["master_priority"]?.jsonPrimitive?.floatOrNull?.let { masterPriority = it.toInt() }
         settings["arbitration_key"]?.jsonPrimitive?.contentOrNull?.let { arbitrationKey = it }

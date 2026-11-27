@@ -108,7 +108,9 @@ abstract class SatelliteAudioPipeline(
     // Local end of speech, for replies HA's voice detection misses (local_end_of_speech). Only in a
     // continued conversation: after a wake word the audio starts with the wake sound, which could
     // pass for speech and end the request during the pause before the command.
-    private val endOfSpeech = EndOfSpeechDetector(config.sampleRate)
+    private val endOfSpeech = EndOfSpeechDetector(
+        config.sampleRate, EndOfSpeechDetector.silenceMsFor(config.finishedSpeakingDetection)
+    )
     private var lastRequestTranscript = ""
     private var result: PipelineEndReason = PipelineEndReason.NONE
     private var shouldContinueConversation = config.continueConversation

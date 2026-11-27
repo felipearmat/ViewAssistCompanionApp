@@ -13,11 +13,15 @@ import kotlin.math.sqrt
  * leaving out digital silence (below [SUPPRESSED_DBFS]). (The quietest frame alone was fooled by
  * the near silence noise suppression gives right after the microphone opens: in a room at
  * -45 dBFS the floor came out at -90 and the reply never "ended".) [START_FRAMES] frames in a
- * row [START_MARGIN_DB] above the floor are speech; after speech, [END_SILENCE_MS] below
+ * row [START_MARGIN_DB] above the floor are speech; after speech, [endSilenceMs] (700 ms by default) below
  * max(floor + [END_MARGIN_DB], speech level - [SPEECH_DROP_DB]) ends it, so a floor misjudged
  * too low still ends on a clear drop. Same rules as vaca-linux. Pure and frame-size agnostic.
  */
-class EndOfSpeechDetector(private val sampleRate: Int = 16000) {
+class EndOfSpeechDetector(
+    private val sampleRate: Int = 16000,
+    // Silence after speech that ends it (HA's finished speaking detection, see [silenceMsFor]).
+    private val endSilenceMs: Int = END_SILENCE_MS,
+) {
     companion object {
         const val CALIBRATION_FRAMES = 3
         const val START_FRAMES = 2
@@ -25,6 +29,16 @@ class EndOfSpeechDetector(private val sampleRate: Int = 16000) {
         const val END_MARGIN_DB = 6f
         const val SPEECH_DROP_DB = 16f
         const val END_SILENCE_MS = 700
+
+        /**
+         * Silence that ends speech for HA's "finished speaking detection" of this satellite
+         * (default / relaxed / aggressive), matching the seconds HA's own voice detection uses.
+         */
+        fun silenceMsFor(sensitivity: String): Int = when (sensitivity) {
+            "relaxed" -> 1250
+            "aggressive" -> 400
+            else -> END_SILENCE_MS
+        }
         /** Speech is never quieter than this, whatever the floor. */
         const val MIN_SPEECH_DBFS = -50f
         /** Quieter than this is noise suppression or digital silence, not the room. */
@@ -83,7 +97,7 @@ class EndOfSpeechDetector(private val sampleRate: Int = 16000) {
         speechDb?.let { endLevel = maxOf(endLevel, it - SPEECH_DROP_DB) }
         if (db < endLevel) {
             silentMs += frameMs
-            if (silentMs >= END_SILENCE_MS) {
+            if (silentMs >= endSilenceMs) {
                 ended = true
                 return Result.SPEECH_ENDED
             }
