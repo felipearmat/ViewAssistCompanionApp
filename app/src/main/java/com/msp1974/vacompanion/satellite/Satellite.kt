@@ -500,7 +500,15 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                 override suspend fun onWakeWordDetected(detection: WakeWordEngineProvider.WakeWordDetection) {
                     Timber.d("Wake word detected: $detection")
                     if (isResponding()) {
-                        interruptResponse(detection)
+                        if (System.currentTimeMillis() < noBargeInUntil) {
+                            // HA asked not to be interrupted (e.g. a calibration step being
+                            // explained): the reply goes on, and the detection only counts as a
+                            // near miss.
+                            Timber.i("Wake word heard while responding, not interrupting (no_barge_in)")
+                            handleNearMiss(detection)
+                        } else {
+                            interruptResponse(detection)
+                        }
                     } else if (mediaManager.alarmPlayer.isSounding()) {
                         onStopWordDetected(detection)
                     } else {
@@ -572,6 +580,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         detectionBuffer?.cancel()
         detectionBuffer = null
     }
+
+    // Until when a wake word heard while responding must not interrupt (no_barge_in action).
+    @Volatile private var noBargeInUntil = 0L
 
     /** True while a pipeline is genuinely in progress: started, and neither ended nor stuck. */
     fun isResponding(): Boolean {
@@ -1043,6 +1054,16 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                             AssistIndicator.set(AssistIndicator.State.IDLE)
                         }
                     }
+                }
+                // {"seconds": N}: for the next N s (at most NO_BARGE_IN_MAX_SECONDS; 0 ends it now)
+                // a wake word heard while the assistant speaks doesn't cut the reply.
+                "no_barge_in" -> {
+                    val seconds = if (payloadStr.isNotEmpty())
+                        Json.parseToJsonElement(payloadStr).jsonObject["seconds"]?.jsonPrimitive?.intOrNull ?: 0
+                    else 0
+                    val s = seconds.coerceIn(0, NO_BARGE_IN_MAX_SECONDS)
+                    noBargeInUntil = if (s > 0) System.currentTimeMillis() + s * 1000L else 0L
+                    Timber.i("No barge-in for $s s")
                 }
                 "capture_stop" -> {
                     val session = if (payloadStr.isNotEmpty())
@@ -1537,6 +1558,8 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
         // Settings from HA right after connecting: waits before giving up, and start attempts.
         const val SETTINGS_WAIT_MS = 30_000L
         const val SATELLITE_START_ATTEMPTS = 3
+        // Longest window HA can ask for in which the assistant's speech isn't interrupted.
+        const val NO_BARGE_IN_MAX_SECONDS = 120
         // Near misses at or above this score also send their audio (when wake_word_clips is on).
         const val NEAR_MISS_CLIP_MIN_SCORE = 0.3f
         const val EVENT_LOCAL_WAKE_WORD_DETECTED = "localWakeWordDetected"
