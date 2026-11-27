@@ -236,6 +236,16 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
         state = SatelliteState.RUNNING
         sendPendingSettings()
+
+        // Silent updates report to HA through this satellite; send what is owed (an update
+        // finished by this very start, or a result kept while HA was away).
+        com.msp1974.vacompanion.device.UpdateReport.sender = { data ->
+            if (state == SatelliteState.RUNNING && clientId.isNotEmpty()) {
+                sendStatus(buildJsonObject { put("install_update", data) })
+                true
+            } else false
+        }
+        com.msp1974.vacompanion.device.UpdateReport.flush(context)
         BroadcastSender.sendBroadcast(context, BroadcastSender.SATELLITE_STARTED)
 
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
@@ -409,6 +419,7 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
 
     suspend fun stop() {
         state = SatelliteState.STOPPING
+        com.msp1974.vacompanion.device.UpdateReport.sender = null
         config.initSettings = false
         config.eventBroadcaster.removeListener(this)
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
@@ -1078,7 +1089,9 @@ abstract class Satellite(var context: Context, val deviceManager: DeviceManager,
                     val p = Json.parseToJsonElement(payloadStr).jsonObject
                     val url = p["url"]?.jsonPrimitive?.contentOrNull.orEmpty()
                     val sha = p["sha256"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                    scope.launch { com.msp1974.vacompanion.device.ManagedDevice.installUpdate(context, url, sha) }
+                    val base = if (config.homeAssistantURL.isNotEmpty()) config.homeAssistantURL
+                        else "http://${config.homeAssistantConnectedIP}:${config.homeAssistantHTTPPort}"
+                    scope.launch { com.msp1974.vacompanion.device.ManagedDevice.installUpdate(context, url, sha, base) }
                 }
                 "release_device_owner" -> com.msp1974.vacompanion.device.ManagedDevice.release(context)
                 // Managed satellites carry no personal accounts (removed, and new ones blocked).

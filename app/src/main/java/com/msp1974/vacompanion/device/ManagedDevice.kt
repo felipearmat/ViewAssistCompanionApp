@@ -140,13 +140,20 @@ object ManagedDevice {
      * Downloads the APK at [url], checks it against [sha256] (hex) and installs it silently.
      * Android then restarts the app (UpdateRestartReceiver reopens it). Only as device owner.
      */
-    suspend fun installUpdate(context: Context, url: String, sha256: String): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * [url] may be relative to HA ("/local/..."): it is completed with [baseUrl], the HA this
+     * satellite talks to. Each step and any failure is reported to HA ([UpdateReport]).
+     */
+    suspend fun installUpdate(context: Context, url: String, sha256: String, baseUrl: String = ""): Result<Unit> = withContext(Dispatchers.IO) {
+        val fullUrl = if (url.startsWith("/") && baseUrl.isNotEmpty()) baseUrl.removeSuffix("/") + url else url
         runCatching {
             check(isOwner(context)) { "not the device owner" }
             require(sha256.length == 64) { "sha256 missing" }
+            require(fullUrl.startsWith("http://") || fullUrl.startsWith("https://")) { "invalid url" }
+            UpdateReport.report(context, "downloading", url = fullUrl, sha256 = sha256)
             val apk = File(context.cacheDir, "update.apk")
             val digest = MessageDigest.getInstance("SHA-256")
-            val connection = URL(url).openConnection() as HttpURLConnection
+            val connection = URL(fullUrl).openConnection() as HttpURLConnection
             connection.connectTimeout = 15_000
             connection.readTimeout = 60_000
             connection.inputStream.use { input ->
@@ -177,12 +184,16 @@ object ManagedDevice {
                     context, sessionId, Intent(context, InstallStatusReceiver::class.java),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 )
-                Timber.i("Managed device: installing update from $url")
+                Timber.i("Managed device: installing update from ${fullUrl.substringBefore('#')}")
+                UpdateReport.report(context, "installing", url = fullUrl, sha256 = sha256)
                 session.commit(status.intentSender)
             }
             apk.delete()
             Unit
-        }.onFailure { Timber.e(it, "Managed device: update not installed") }
+        }.onFailure {
+            Timber.e(it, "Managed device: update not installed")
+            UpdateReport.report(context, "error", reason = it.toString().take(200), url = fullUrl, sha256 = sha256)
+        }
     }
 }
 
@@ -192,7 +203,10 @@ class InstallStatusReceiver : BroadcastReceiver() {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
         if (status == PackageInstaller.STATUS_SUCCESS) Timber.i("Managed device: update installed")
-        else Timber.e("Managed device: update failed ($status): $message")
+        else {
+            Timber.e("Managed device: update failed ($status): $message")
+            UpdateReport.report(context, "error", reason = "installer $status: ${message.orEmpty()}".take(200))
+        }
     }
 }
 
